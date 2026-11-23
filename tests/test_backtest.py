@@ -102,3 +102,17 @@ def test_metrics_basic():
 def test_bar_validation():
     with pytest.raises(ValueError):
         Bar(date(2025, 1, 2), "005930", 100, 90, 80, 95, 10)  # high < open
+
+
+def test_daily_target_reports_exact_hit_includes_flat_day_and_keeps_trading():
+    bars = mk_bars([1000, 1500, 1500, 1500], opens=[1000, 1000, 1500, 1500])
+    strategy = Script({0: [TargetOrder("005930", Side.BUY, 10)],
+                       1: [TargetOrder("005930", Side.SELL, 10)]})
+    result = BacktestEngine(BacktestConfig(100_000, CostModel(0, 0, 0))).run(strategy, bars)
+    summary = result.summary()
+    assert [fill.side for fill in result.fills] == [Side.BUY, Side.SELL]
+    assert summary["daily_target_return"] == 0.05
+    assert summary["daily_observed_days"] == 4
+    assert summary["daily_target_hit_days"] == 1
+    assert summary["daily_target_hit_rate"] == 0.25
+    assert summary["daily_average_return"] == pytest.approx(0.05 / 4)
