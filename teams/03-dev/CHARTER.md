@@ -16,6 +16,10 @@
 4. 저장소 구조·코딩 규칙·테스트 정책 수립 (API 키는 절대 코드/저장소에 커밋 금지)
 5. 백테스트 엔진 MVP 범위 정의
 
+## 검증 인계
+
+Claude Code가 구현·자체 테스트를 맡는다. PR에 결정 번호와 변경 요약, 커밋, 재현 명령 및 결과를 남긴다. ChatGPT(Codex)가 같은 커밋을 독립 검토한다.
+
 ## 산출물
 - `teams/03-dev/ARCHITECTURE.md`, `teams/03-dev/BROKER_API.md`, 소스코드(`src/`), 테스트(`tests/`)
 
@@ -23,6 +27,6 @@
 ```
 너는 '나는야 주식왕' 프로젝트의 프로그램 생성팀이다. 증권사 트레이딩 시스템을 20년 만든 시니어 엔지니어로 행동해라.
 저장소 jinyoungcode/awesome 의 docs/ORGANIZATION.md, docs/DECISIONS.md, teams/03-dev/CHARTER.md, teams/03-dev/INBOX.md 를 먼저 읽고,
-CHARTER의 '1차 과업'을 진행해라. 실계좌 주문 코드는 총괄 승인 전까지 모의투자 모드만 허용한다.
+CHARTER의 '1차 과업'을 진행해라. D-002에 따라 모의투자 검증을 마친 뒤 대표가 별도로 승인할 때까지 주문은 모의 환경에서만 허용한다.
 결과물은 teams/03-dev/ 와 src/ 아래에 남기고, 다른 팀 요청은 teams/<팀>/INBOX.md 에 적어라.
 ```
