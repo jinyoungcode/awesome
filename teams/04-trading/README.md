@@ -1,6 +1,6 @@
 # ④ 매도매수팀 작업 현황
 
-> 최종 갱신: 2026-11-23 (2회차 — 대표 결정 Q-T01~Q-T03 반영)
+> 최종 갱신: 2026-11-23 (3회차 — 대표 결정 Q-T01~Q-T09 반영)
 
 ## 1차 과업 진행 상태
 
@@ -12,7 +12,14 @@
 | 4 | 과최적화 방지 규칙 | 완료 | [EVALUATION.md](EVALUATION.md) §2·§4 |
 | 5 | 리스크관리실 한도 협의 | 협의안 제출, **회신 대기** | [RISK_ALIGNMENT.md](RISK_ALIGNMENT.md) |
 
-## 대표 결정 반영 (2026-11-23)
+## 대표 결정 반영 — 3회차 (2026-11-23)
+- Q-T04 배분은 매매팀에 위임 → 규칙 기반 자동 배분 [ALLOCATION_POLICY.md](ALLOCATION_POLICY.md)
+- Q-T05 레버리지·공매도 등 전부 금지 / Q-T06 완전 자동 + 처음 4주 아침 ON/OFF 승인 / Q-T09 새로 시작
+- Q-T07 대표 수동 매매 제한 없음 → 감지·분리 처리 규칙 [RISK_ALIGNMENT.md](RISK_ALIGNMENT.md) §5
+- Q-T08 10만원 테스트로 시작, 단계적 증액, 1천만원 이상 기준 설계 → [CAPITAL_SCALING.md](CAPITAL_SCALING.md)
+- Q-T10~Q-T12는 추천안으로 진행
+
+## 대표 결정 반영 — 2회차 (2026-11-23)
 - **Q-T01 데이트레이딩 / Q-T02 공격형·최종 손절 −20% / Q-T03 국내+해외** 결정 반영
 - 검토 결과: 초단타는 불가, 분봉 데이트레이딩은 조건부 가능 → [DAYTRADING_REVIEW.md](DAYTRADING_REVIEW.md)
 - 스타일 v0.2([INVESTMENT_STYLE.md](INVESTMENT_STYLE.md)), 리스크 수정안([RISK_ALIGNMENT.md](RISK_ALIGNMENT.md) §4), 데이트레이딩 평가 기준([EVALUATION.md](EVALUATION.md) §3.5)
