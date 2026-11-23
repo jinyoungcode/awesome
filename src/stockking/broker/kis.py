@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..config import Secret, require_secret
+from decimal import Decimal
+
 from ..domain import OrderRequest, OrderType, Side
+from ..market import Market, market_of
 from .base import BrokerOrderResult
 
 KIS_PAPER_BASE_URL = "https://openapivts.koreainvestment.com:29443"
@@ -25,6 +28,11 @@ _KIS_LIVE_HOST_MARKERS = ("openapi.koreainvestment.com:9443",)
 # 모의투자 국내주식 현금주문 TR ID (공식 문서 재확인 필요)
 TR_PAPER_BUY = "VTTC0012U"
 TR_PAPER_SELL = "VTTC0011U"
+
+# 모의투자 해외주식(미국) 주문 TR ID (D-006, 공식 문서 재확인 필요)
+TR_PAPER_US_BUY = "VTTT1002U"
+TR_PAPER_US_SELL = "VTTT1001U"
+US_EXCHANGES = ("NASD", "NYSE", "AMEX")  # KIS 해외거래소코드(OVRS_EXCG_CD)
 
 # KIS 주문구분(ORD_DVSN): 00 지정가, 01 시장가
 _ORD_DVSN = {OrderType.LIMIT: "00", OrderType.MARKET: "01"}
@@ -120,10 +128,35 @@ class KisPaperClient:
             "ORD_UNPR": str(order.limit_price if order.order_type is OrderType.LIMIT else 0),
         }
 
+    def build_us_order_body(self, order: OrderRequest) -> dict:
+        """미국 주식 모의 주문 본문. 모의투자 해외주문은 지정가만 지원하는 것으로 알려져 있어 지정가만 허용한다."""
+        if order.order_type is not OrderType.LIMIT:
+            raise ValueError("미국 주식 모의 주문은 지정가(LIMIT)만 허용합니다")
+        if order.native_limit_price is None or order.native_limit_price <= 0:
+            raise ValueError("미국 주식 주문에는 USD 지정가(native_limit_price)가 필요합니다")
+        exchange = (order.exchange or "").upper()
+        if exchange not in US_EXCHANGES:
+            raise ValueError(f"미국 거래소 코드가 필요합니다: {US_EXCHANGES} 중 하나 (받은 값: {order.exchange!r})")
+        price = Decimal(str(order.native_limit_price)).quantize(Decimal("0.01"))
+        return {
+            "CANO": self._creds.account_no,
+            "ACNT_PRDT_CD": self._creds.account_product,
+            "OVRS_EXCG_CD": exchange,
+            "PDNO": order.symbol,
+            "ORD_QTY": str(order.quantity),
+            "OVRS_ORD_UNPR": str(price),
+            "ORD_SVR_DVSN_CD": "0",
+            "ORD_DVSN": "00",
+        }
+
     def place_order(self, order: OrderRequest) -> BrokerOrderResult:
-        tr_id = TR_PAPER_BUY if order.side is Side.BUY else TR_PAPER_SELL
-        res = self._call("POST", "/uapi/domestic-stock/v1/trading/order-cash",
-                         self._headers(tr_id), self.build_order_body(order))
+        if market_of(order.symbol) is Market.US:
+            tr_id = TR_PAPER_US_BUY if order.side is Side.BUY else TR_PAPER_US_SELL
+            path, body = "/uapi/overseas-stock/v1/trading/order", self.build_us_order_body(order)
+        else:
+            tr_id = TR_PAPER_BUY if order.side is Side.BUY else TR_PAPER_SELL
+            path, body = "/uapi/domestic-stock/v1/trading/order-cash", self.build_order_body(order)
+        res = self._call("POST", path, self._headers(tr_id), body)
         ok = res.get("rt_cd") == "0"
         output = res.get("output") or {}
         return BrokerOrderResult(ok, order.client_order_id, output.get("ODNO"), res.get("msg1", ""))

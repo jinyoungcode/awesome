@@ -16,6 +16,7 @@ from datetime import date, datetime, time, timedelta
 
 from ..data import Bar
 from ..domain import AccountSnapshot, Fill, OrderRequest, OrderType, Position, Side
+from ..market import Market, market_of
 from ..risk import KillSwitch, RiskGate, RiskLimits
 from ..strategy import Strategy, StrategyContext, TargetOrder
 from . import metrics
@@ -27,6 +28,11 @@ class BacktestConfig:
     initial_cash: int
     cost_model: CostModel
     risk_limits: RiskLimits = field(default_factory=RiskLimits)
+    # 시장별 비용 모델(D-006). 없는 시장은 cost_model 을 쓴다. 미국 bar 가격은 원화 환산값이어야 한다.
+    market_cost_models: dict[Market, CostModel] = field(default_factory=dict)
+
+    def cost_for(self, symbol: str) -> CostModel:
+        return self.market_cost_models.get(market_of(symbol), self.cost_model)
 
 
 @dataclass
@@ -82,7 +88,6 @@ class BacktestEngine:
         self.cfg = config
 
     def run(self, strategy: Strategy, bars: list[Bar]) -> BacktestResult:
-        cost = self.cfg.cost_model
         gate = RiskGate(self.cfg.risk_limits, KillSwitch(memory_only=True))
         by_date: dict[date, dict[str, Bar]] = defaultdict(dict)
         for b in bars:
@@ -102,7 +107,9 @@ class BacktestEngine:
         kills: list[date] = []
         curve: list[tuple[date, int]] = []
         tot_comm = tot_tax = traded = 0
-        warnings = [] if cost.source != "UNCONFIRMED" else ["비용모델 미확정(UNCONFIRMED) — 회계팀 COST_MODEL.md 확정 필요"]
+        models = [self.cfg.cost_model, *self.cfg.market_cost_models.values()]
+        warnings = ([] if all(m.source != "UNCONFIRMED" for m in models)
+                    else ["비용모델 미확정(UNCONFIRMED) — 회계팀 COST_MODEL.md 확정 필요"])
         week_base = month_base = None
         prev_day: date | None = None
 
@@ -126,6 +133,7 @@ class BacktestEngine:
                 if bar is None or bar.volume == 0:
                     rejected.append((day, t, ("NO_TRADE: 거래정지/데이터 없음",)))
                     continue
+                cost = self.cfg.cost_for(t.symbol)
                 px = cost.slipped_price(bar.open, t.side is Side.BUY)
                 order = OrderRequest(t.symbol, t.side, t.quantity, OrderType.LIMIT, px, strategy.strategy_id)
                 snap = AccountSnapshot(cash, {s: Position(p.symbol, p.quantity, p.avg_price) for s, p in positions.items()},
