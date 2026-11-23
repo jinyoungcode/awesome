@@ -21,7 +21,8 @@ class TradingMode(str, Enum):
     LIVE = "live"
 
 
-# 실계좌 허용 스위치. 대표 승인(DECISIONS.md 에 결정번호 기록) 전까지 False 고정.
+# 실계좌 허용 스위치. 근거: D-002(모의투자 통과 전 실계좌 투입 금지, 2026-11-23 대표 승인).
+# P3 Gate 통과 + 실전 전환 대표 승인 결정번호(DECISIONS.md) + 2인 리뷰 전까지 False 고정.
 LIVE_TRADING_APPROVED: bool = False
 
 
