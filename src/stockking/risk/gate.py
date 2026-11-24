@@ -27,7 +27,7 @@ class RiskLimits:
 
     max_daily_loss_pct: float = 0.02        # 당일 시작 평가금 대비 -2% 도달 시 신규 매수 중단 + 킬스위치
     max_weekly_loss_pct: float = 0.04
-    max_monthly_loss_pct: float | None = 0.08
+    max_monthly_loss_pct: float = 0.08
     max_position_weight: float = 0.20       # 1종목 최대 비중(주문 후 기준)
     max_open_positions: int = 5             # 최대 동시 보유 종목 수
     max_order_value: int = 2_000_000        # 1회 주문 최대 금액(원)
