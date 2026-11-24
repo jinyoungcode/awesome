@@ -203,3 +203,16 @@ def test_paper_report_counts():
     rows = dict((n, (st, why)) for n, st, why in build_report(recs, [], rep))
     assert rows["C4 킬스위치 1회 훈련"][0] == "PASS"
     assert rows["C6 모의 주문 5건 이상"][0] == "PENDING" and "S02 1건 + T_TECH 1건" in rows["C6 모의 주문 5건 이상"][1]
+
+
+# ---------- D-031/D-032 ----------
+def test_operating_capital_and_warning(monkeypatch):
+    from stockking.risk.stages import STARTING_CAPITAL, capital_warning, operating_capital
+    monkeypatch.delenv("STOCKKING_OPERATING_CAPITAL", raising=False)
+    assert STARTING_CAPITAL == operating_capital() == 150_000
+    assert operating_capital() // 5 == 30_000
+    assert capital_warning(150_000) is None and capital_warning(170_000) is None
+    assert "운용 기준" in capital_warning(100_000_000)
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "0")
+    with pytest.raises(ValueError):
+        operating_capital()

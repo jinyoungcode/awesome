@@ -20,6 +20,7 @@ from ..domain import AccountSnapshot, OrderRequest, OrderStatus, OrderType, Posi
 from ..execution import OrderRouter
 from ..krx import floor_to_tick
 from ..risk import KillSwitch, RiskGate
+from ..risk.stages import capital_warning
 from .common import Checklist, journal_path
 from .kis_session import add_key_args, make_client
 
@@ -71,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     limit = floor_to_tick(int(q["price"] * 0.90))
     positions = {s: Position(s, qty, avg) for s, (qty, avg) in bal["positions"].items()}
     equity = bal["total_equity"] or bal["cash"]
+    if (w := capital_warning(equity)):
+        print(f"  ※ 경고: {w}")
     snap = AccountSnapshot(bal["cash"], positions, {a.symbol: q["price"]}, equity)
     router = OrderRouter(kis, RiskGate(kill_switch=KillSwitch()), Journal(journal_path()), TradingMode.PAPER)
     order = OrderRequest(a.symbol, Side.BUY, 1, OrderType.LIMIT, limit, "connect_check")
