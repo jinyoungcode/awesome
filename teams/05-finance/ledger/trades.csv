@@ -1,1 +1,1 @@
-trade_id,trade_date,settle_date,account,mode,market,ticker,name,side,qty,price,gross_amount,commission,sell_tax,other_fee,net_amount,order_id,strategy_id,note
+trade_id,trade_date,settle_date,account,mode,book,market,currency,ticker,name,side,qty,price,gross_amount,commission,sell_tax,sec_fee,finra_taf,other_fee,net_amount,fx_rate,net_amount_krw,order_id,strategy_id,reason_code,note

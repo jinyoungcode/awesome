@@ -1,1 +1,1 @@
-date,account,mode,start_equity,cash_flow,end_equity,realized_pnl,unrealized_pnl,commission,sell_tax,dividend_net,daily_return_twr,cum_return_twr,peak_equity,drawdown,broker_equity,recon_diff,recon_status,note
+date,account,mode,book,start_equity_krw,cash_flow_krw,end_equity_krw,krw_cash,usd_cash,usdkrw_rate,realized_pnl_krw,unrealized_pnl_krw,fx_pnl_krw,commission_krw,sell_tax_krw,us_reg_fee_krw,dividend_net_krw,daily_return_twr,cum_return_twr,peak_equity_krw,drawdown,us_tax_reserve_krw,broker_equity_krw,recon_diff_krw,recon_status,note

@@ -1,1 +1,1 @@
-date,account,type,amount,from_to,reason,decision_ref,note
+date,account,type,currency,amount,amount_krw,from_to,reason,decision_ref,note
