@@ -1,7 +1,7 @@
 # 데이터 사전 (v0.1 초안)
 
 > 작성: ② 자료 수집팀 / 2026-11-23
-> 원칙: 모든 금액은 **원(KRW) 정수**, 수량은 **주(株) 정수**, 날짜는 `YYYY-MM-DD`(KST 거래일), 시각은 `Asia/Seoul` ISO-8601. 비율은 소수(0.05 = 5%).
+> 원칙: 국내 금액은 **원(KRW) 정수**, 미국 금액은 **USD 소수(원값)** — 통화는 `currency` 열로 구분(D-006), 수량은 **주(株) 정수**, 날짜는 `YYYY-MM-DD`(KST 거래일), 시각은 `Asia/Seoul` ISO-8601. 비율은 소수(0.05 = 5%).
 > 모든 테이블은 공통 메타 필드(`source`, `collected_at`, `batch_id`)를 가진다. 원천 원본(raw)은 덮어쓰지 않고 append-only로 보관한다.
 
 ## 0. 공통 메타 필드
@@ -19,7 +19,8 @@
 | `isin` | str(12) | — | 표준코드 (**영구 식별자, PK**) | KRX |
 | `ticker` | str(6) | — | 단축코드. 재사용될 수 있으므로 PK로 쓰지 않음 | KRX |
 | `name_kr` | str | — | 종목명 (변경 이력은 `instrument_history`) | KRX |
-| `market` | enum | — | `KOSPI` / `KOSDAQ` / `KONEX` | KRX |
+| `market` | enum | — | `KOSPI` / `KOSDAQ` / `KONEX` / `NYSE` / `NASDAQ` / `AMEX` | KRX / KIS |
+| `currency` | enum | — | `KRW` / `USD` | 산출 |
 | `security_type` | enum | — | `COMMON` / `PREFERRED` / `ETF` / `ETN` / `REIT` / `SPAC` / `OTHER` | KRX |
 | `corp_code` | str(8) | — | DART 고유번호 (재무·공시 조인 키) | DART |
 | `sector_krx` | str | — | KRX 업종 분류 | KRX |
@@ -129,7 +130,21 @@ PK: (`corp_code`, `fiscal_year`, `fiscal_quarter`, `fs_div`, `account_id`, `rcep
 | `open_time` / `close_time` | time | 개장·폐장 시각 (수능일 등 지연개장 반영) |
 | `note` | str | 휴장 사유 |
 
+## 11. `fx_rate` — 환율 (갱신: 매 영업일 09:30, v0.2 추가)
+
+PK: (`date`, `pair`)
+
+| 필드 | 타입 | 단위 | 설명 | 출처 |
+|---|---|---|---|---|
+| `date` | date | — | 한국 고시일 | ECOS |
+| `pair` | enum | — | `USDKRW` | — |
+| `rate` | decimal(10,2) | 원/달러 | 매매기준율 | ECOS |
+| `is_filled` | bool | — | 휴일 forward fill 여부 | 산출 |
+
+> 일봉 내보내기 형식은 `DAILY_INTERFACE.md`, 분봉 적재안은 `MINUTE_SOURCES.md` §3.
+
 ## 변경 이력
 | 버전 | 날짜 | 내용 |
 |---|---|---|
 | v0.1 | 2026-11-23 | 최초 작성 |
+| v0.2 | 2026-11-24 | 미국 주식(통화·시장), `fx_rate` 추가 |
