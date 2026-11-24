@@ -91,7 +91,8 @@
 ## 6. tax_reserve.csv — 해외주식 양도세 충당금
 - `us_realized_net_pnl_ytd_krw`: 1월 1일부터의 미국 주식 실현손익 합계. 세법상 원화 환산은 **취득일·양도일 기준환율** 기준이며, 수수료 등 필요경비를 차감한다.
 - `taxable_ytd_krw = max(0, 순익 − 2,500,000)`, `reserve_required_krw = taxable × 0.22`
-- 충당금은 운용 가능 자금에서 뺀다(FUNDING_PLAN Q-7, 대표 결정 대기). 다음 해 5월 신고·납부 후 `cashflows.csv`에 `TAX_PAYMENT`로 기록하고 충당금을 해제한다.
+- 충당금은 **주문 가능 현금과 재투자 재원에서 뺀다(D-034).**
+- 250만 원 공제와 손익통산은 대표 본인의 **모든 계좌**(수동 매매·다른 증권사 포함)에 걸쳐 적용된다. 다른 계좌 자료가 없으면 `provisional=Y`, `other_accounts_included=N`으로 표시하고 보고서에 '잠정치'라고 적는다(D-034). 다음 해 5월 신고·납부 후 `cashflows.csv`에 `TAX_PAYMENT`로 기록하고 충당금을 해제한다.
 
 ## 7. opex.csv
 - `category`: `SERVER` / `DATA` / `API` / `TOOL` / `DOMAIN` / `ETC`
