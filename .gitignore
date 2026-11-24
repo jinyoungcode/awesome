@@ -1,0 +1,24 @@
+# --- 비밀값: 절대 커밋 금지 ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+**/kis_token*.json
+**/*token*.json
+
+# --- 런타임 산출물 ---
+var/
+logs/
+*.jsonl
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
