@@ -47,7 +47,7 @@ def test_kill_switch_reset_requires_operator(tmp_path):
 
 def test_daily_loss_trips_kill_switch():
     gate = RiskGate()
-    d = gate.check(buy(), snap(cash=9_700_000, sod=10_000_000))  # -3%
+    d = gate.check(buy(), snap(cash=9_400_000, sod=10_000_000))  # -6% (기본 T0 한도 -5%, D-028)
     assert not d and "DAILY_LOSS_LIMIT" in d.reasons[0]
     assert gate.kill_switch.is_tripped()
 

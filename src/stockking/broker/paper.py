@@ -54,7 +54,7 @@ class PaperBroker:
 
         gross = price * order.quantity
         commission = self._costs.commission(gross)
-        tax = self._costs.sell_tax(gross) if order.side is Side.SELL else 0
+        tax = self._costs.sell_charges(gross, order.quantity) if order.side is Side.SELL else 0
         pos = self._positions.setdefault(order.symbol, Position(order.symbol))
 
         if order.side is Side.BUY:

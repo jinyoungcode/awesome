@@ -87,3 +87,17 @@
 - S02 v1.0(bcad9b6) 대조: 신호 규칙(§1~§8)은 v0.1과 같아 `s02.py` 로직 변경 없음(버전 표기만 갱신). §10 15만 원 사이징은 `strategy/d005_sizer.py` + v1.0 예제 3건 테스트(PR #2 `sizing.py` 필요 → 병합 전 자동 건너뜀, PR #2와 합친 상태에서 통과 확인)
 - D-035: `US_DAYTRADING_COST_VALIDATION.md` 초안 — 비용 실측 항목·절차, 별도 검증 구간, 비용 시나리오 S0~S4·손익분기, 판정 제안, 재현 절차
 - `.gitattributes`(INBOX.md merge=union) — 총괄 d8dee39와 동일 내용
+
+## 2026-11-24 — PR #2 병합(4d7c493) 후 미뤄 둔 작업 + D-036
+
+| 항목 | 반영 |
+|---|---|
+| RiskLimits 기본값 T0 교체 | 일 −5%, 주 −8%, 월 없음, 1건 손실 2%, 최종 손절 −20% (D-028) |
+| 1건 손실 2% (D-028) | `OrderRequest.stop_price` 추가, 관문 TRADE_LOSS·BAD_STOP·NO_STOP 검사 (`require_stop_for_buy` 로 손절가 필수화 가능) |
+| D-021/D-025/D-036 관문 검사 | `order_target`·`sizing_exception` 필드, 관문 `_check_d005`: 90~110% 밴드, 1주 예외 종류 재계산(UNDER/OVER), 1주 가격 ≤ 30%, '목표 초과' 동시 1개('목표 미달' 제외), 예외는 손절가 필수 |
+| D-025 vs 비중 22% 충돌 | 22% 한도가 '목표 초과' 예외(가격 22~30%)를 전부 막던 문제 발견 → 1주 예외 신규 진입은 비중 한도 30% 적용, 추가 매수는 22% 유지 |
+| D-036 사이저 | `d005_sizer`: ONE_SHARE_UNDER / ONE_SHARE_OVER, 동시 1개 한도는 OVER 만 |
+| 미국 비용 필드 | `CostModel.sec_fee_rate`, `finra_taf_per_share`, `finra_taf_max`, `us_from_usd()`, 백테스트·로컬 모의 매도에 `sell_charges()` 적용 |
+| 테스트 | 147개 통과 |
+
+다음: S02 주문 실행기(주문계획 → 관문 → KIS 제출, 15:15 LDAY 잔량 취소), C2 신호 일치 비교, 미국 장부 필드(환율·SEC/TAF), 결제일 기준 연도별 거래세표(회계팀 요청).

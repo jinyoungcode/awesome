@@ -1,7 +1,6 @@
 """자금 단계별 리스크 한도 (D-014, D-016, D-025, D-028).
 
-`RiskLimits()` 기본값은 초기 임시값이다. 운영 코드는 반드시 `limits_for(stage)`를 쓴다.
-(PR #2 병합 후 RiskLimits 기본값도 T0 값으로 맞출 예정 — 지금 바꾸면 PR #2와 충돌)
+`RiskLimits()` 기본값 = T0 값(D-028). 단계가 바뀌면 `limits_for(stage)`가 일중 한도 등을 바꾼다.
 """
 
 from __future__ import annotations
@@ -52,9 +51,9 @@ WEEKLY_LOSS = 0.08
 FINAL_STOP_FROM_PRINCIPAL = 0.20       # 원금 −20% → 전량 청산·시스템 정지 (D-016)
 PEAK_DRAWDOWN_DERISK = 0.15            # 최고점 −15% → 매매 규모 50% 축소 (D-016)
 DERISK_MULTIPLIER = 0.5
-MAX_TRADE_LOSS_PCT = 0.02              # 매매 1건 최대 손실 (D-028) — 손절가 필드 추가 후 관문 검사(PR #2 병합 후)
+MAX_TRADE_LOSS_PCT = 0.02              # 매매 1건 최대 손실 (D-028) — 관문 TRADE_LOSS 검사
 
-# D-025 1주 예외 한도 — D-021 구현 PR(PR #2 병합 후)에서 사용. 15만 원 기준 1주 가격 상한 45,000원(D-032)
+# D-025 1주 예외 한도 — 관문 _check_d005 와 d005_sizer 에서 사용. 15만 원 기준 1주 가격 상한 45,000원(D-032)
 ONE_SHARE_EXCEPTION_MAX_PRICE_PCT = 0.30
 ONE_SHARE_EXCEPTION_MAX_CONCURRENT = 1
 ONE_SHARE_EXCEPTION_MAX_LOSS_PCT = 0.02
@@ -75,6 +74,9 @@ def limits_for(stage: CapitalStage, base: RiskLimits | None = None) -> RiskLimit
         max_weekly_loss_pct=WEEKLY_LOSS,
         max_monthly_loss_pct=None,       # D-028에 월간 한도 없음 → 검사 안 함
         final_stop_pct=FINAL_STOP_FROM_PRINCIPAL,
+        max_trade_loss_pct=MAX_TRADE_LOSS_PCT,
+        one_share_max_price_pct=ONE_SHARE_EXCEPTION_MAX_PRICE_PCT,
+        one_share_max_concurrent_over=ONE_SHARE_EXCEPTION_MAX_CONCURRENT,
     )
 
 

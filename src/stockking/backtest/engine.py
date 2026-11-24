@@ -148,7 +148,7 @@ class BacktestEngine:
                     continue
                 gross = px * t.quantity
                 comm = cost.commission(gross)
-                tax = cost.sell_tax(gross) if t.side is Side.SELL else 0
+                tax = cost.sell_charges(gross, t.quantity) if t.side is Side.SELL else 0
                 pos = positions.setdefault(t.symbol, Position(t.symbol))
                 if t.side is Side.BUY:
                     if gross + comm > cash:

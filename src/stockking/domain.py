@@ -52,6 +52,9 @@ class OrderRequest:
     client_order_id: str = field(default_factory=new_client_order_id)
     native_limit_price: Decimal | None = None  # 현지 통화 가격(미국: USD) — 증권사 전송용
     exchange: str | None = None                # 미국 거래소 코드(KIS: NASD/NYSE/AMEX)
+    stop_price: float | None = None            # 매수 시 초기 손절가(원 환산) — 1건 손실 2% 검사(D-028)
+    order_target: int | None = None            # D-005 주문 목표(원). 주면 관문이 90~110%·1주 예외를 검사
+    sizing_exception: str = ""                 # "" | ONE_SHARE_UNDER | ONE_SHARE_OVER (D-021/D-036)
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
@@ -93,6 +96,7 @@ class AccountSnapshot:
     start_of_week_equity: int | None = None
     start_of_month_equity: int | None = None
     principal: int | None = None          # 투입 원금 (최종 손절 기준, D-016)
+    over_exception_symbols: frozenset = frozenset()  # '목표 초과' 1주 예외로 보유 중인 종목 (D-025/D-036)
     peak_equity: int | None = None        # 계좌 최고 평가금 (사이징 축소 기준, D-016)
 
     @property
