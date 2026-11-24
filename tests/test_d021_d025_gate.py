@@ -85,3 +85,11 @@ def test_weight_cap_30pct_only_for_new_one_share_exception():
     held = {"000100": Position("000100", 1, 42_000)}
     r = reasons(buy(42_000, stop_pct=0.06, exc="ONE_SHARE_OVER"), snap(42_000, positions=held))
     assert any("POSITION_WEIGHT" in x and "22%" in x for x in r)   # 추가 매수는 예외 비중 적용 안 함
+
+
+def test_exception_position_over_30pct_blocks_add_but_no_forced_sell():
+    # 예외로 산 종목이 올라 비중 35%: 추가 매수 거부, 매도는 허용(강제 매도 없음 — 관문은 매도를 만들지 않음)
+    held = {"000100": Position("000100", 1, 42_000)}
+    s = AccountSnapshot(97_500, held, {"000100": 52_500}, 150_000)
+    assert not gate().check(buy(52_500, stop_pct=0.05, exc="ONE_SHARE_OVER"), s)
+    assert gate().check(OrderRequest("000100", Side.SELL, 1, OrderType.LIMIT, 52_500, "S02"), s)
