@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable
@@ -25,6 +26,10 @@ _KIS_LIVE_HOST_MARKERS = ("openapi.koreainvestment.com:9443",)
 # 모의투자 국내주식 현금주문 TR ID (공식 문서 재확인 필요)
 TR_PAPER_BUY = "VTTC0012U"
 TR_PAPER_SELL = "VTTC0011U"
+TR_PAPER_CANCEL = "VTTC0013U"         # 정정취소 (구 VTTC0803U)
+TR_PAPER_BALANCE = "VTTC8434R"        # 잔고 조회
+TR_PAPER_DAILY_ORDERS = "VTTC8001R"   # 일별 주문체결 조회(3개월 이내)
+TR_PRICE = "FHKST01010100"            # 현재가 (실전·모의 공통)
 
 # KIS 주문구분(ORD_DVSN): 00 지정가, 01 시장가
 _ORD_DVSN = {OrderType.LIMIT: "00", OrderType.MARKET: "01"}
@@ -74,6 +79,7 @@ class KisPaperClient:
         self._token: Secret | None = None
         self._token_expiry: float = 0.0
         self._last_call: float = 0.0
+        self.last_response: dict = {}
 
     # --- 인증 ---
     def _access_token(self) -> str:
@@ -107,7 +113,12 @@ class KisPaperClient:
         if wait > 0 and self._last_call:
             time.sleep(wait)
         self._last_call = time.monotonic()
-        return self._transport(method, self._base + path, headers, body)
+        url = self._base + path
+        if method == "GET" and body:
+            url, body = f"{url}?{urllib.parse.urlencode(body)}", {}
+        res = self._transport(method, url, headers, body)
+        self.last_response = res  # 주문 직후 KRX_FWDG_ORD_ORGNO(취소에 필요) 확인용
+        return res
 
     # --- 주문 ---
     def build_order_body(self, order: OrderRequest) -> dict:
@@ -127,3 +138,62 @@ class KisPaperClient:
         ok = res.get("rt_cd") == "0"
         output = res.get("output") or {}
         return BrokerOrderResult(ok, order.client_order_id, output.get("ODNO"), res.get("msg1", ""))
+
+    # ------------------------------------------------------------------
+    # 조회·취소 (D-022 모의 계좌 연결 점검용). ⚠ TR ID·필드명은 공식 문서 재확인 필요
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ok(res: dict, what: str) -> dict:
+        if res.get("rt_cd") != "0":
+            raise RuntimeError(f"KIS {what} 실패: [{res.get('msg_cd', '')}] {res.get('msg1', '')}")
+        return res
+
+    def inquire_price(self, symbol: str) -> dict:
+        """국내주식 현재가. 반환: {'price': 현재가, 'base_price': 기준가(전일종가)}"""
+        res = self._ok(self._call("GET", "/uapi/domestic-stock/v1/quotations/inquire-price",
+                                  self._headers(TR_PRICE), {"FID_COND_MRKT_DIV_CODE": "J",
+                                                            "FID_INPUT_ISCD": symbol}), "현재가 조회")
+        out = res.get("output") or {}
+        return {"price": int(out.get("stck_prpr", 0)), "base_price": int(out.get("stck_sdpr", 0))}
+
+    def inquire_balance(self) -> dict:
+        """잔고. 반환: {'cash': 예수금, 'total_equity': 총평가, 'positions': {종목: (수량, 평균가)}}"""
+        res = self._ok(self._call("GET", "/uapi/domestic-stock/v1/trading/inquire-balance",
+                                  self._headers(TR_PAPER_BALANCE), {
+                                      "CANO": self._creds.account_no, "ACNT_PRDT_CD": self._creds.account_product,
+                                      "AFHR_FLPR_YN": "N", "OFL_YN": "", "INQR_DVSN": "02", "UNPR_DVSN": "01",
+                                      "FUND_STTL_ICLD_YN": "N", "FNCG_AMT_AUTO_RDPT_YN": "N", "PRCS_DVSN": "00",
+                                      "CTX_AREA_FK100": "", "CTX_AREA_NK100": ""}), "잔고 조회")
+        positions = {r["pdno"]: (int(r.get("hldg_qty", 0)), float(r.get("pchs_avg_pric", 0)))
+                     for r in res.get("output1") or [] if int(r.get("hldg_qty", 0)) > 0}
+        summary = (res.get("output2") or [{}])[0]
+        return {"cash": int(summary.get("dnca_tot_amt", 0)), "total_equity": int(summary.get("tot_evlu_amt", 0)),
+                "positions": positions}
+
+    def cancel_order(self, broker_order_id: str, symbol: str, quantity: int,
+                     krx_org_no: str | None = None) -> BrokerOrderResult:
+        """미체결 주문 전량 취소. krx_org_no 는 주문 응답 output.KRX_FWDG_ORD_ORGNO."""
+        org = krx_org_no or ((self.last_response.get("output") or {}).get("KRX_FWDG_ORD_ORGNO", ""))
+        res = self._call("POST", "/uapi/domestic-stock/v1/trading/order-rvsecncl", self._headers(TR_PAPER_CANCEL), {
+            "CANO": self._creds.account_no, "ACNT_PRDT_CD": self._creds.account_product,
+            "KRX_FWDG_ORD_ORGNO": org, "ORGN_ODNO": broker_order_id, "ORD_DVSN": "00",
+            "RVSE_CNCL_DVSN_CD": "02", "ORD_QTY": "0", "ORD_UNPR": "0", "QTY_ALL_ORD_YN": "Y"})
+        output = res.get("output") or {}
+        return BrokerOrderResult(res.get("rt_cd") == "0", "", output.get("ODNO") or broker_order_id, res.get("msg1", ""))
+
+    def inquire_daily_orders(self, yyyymmdd: str) -> list[dict]:
+        """당일 주문·체결 내역(첫 페이지). 각 행: odno, symbol, side, ord_qty, filled_qty, avg_price, canceled"""
+        res = self._ok(self._call("GET", "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                                  self._headers(TR_PAPER_DAILY_ORDERS), {
+                                      "CANO": self._creds.account_no, "ACNT_PRDT_CD": self._creds.account_product,
+                                      "INQR_STRT_DT": yyyymmdd, "INQR_END_DT": yyyymmdd, "SLL_BUY_DVSN_CD": "00",
+                                      "INQR_DVSN": "00", "PDNO": "", "CCLD_DVSN": "00", "ORD_GNO_BRNO": "",
+                                      "ODNO": "", "INQR_DVSN_3": "00", "INQR_DVSN_1": "",
+                                      "CTX_AREA_FK100": "", "CTX_AREA_NK100": ""}), "주문체결 조회")
+        rows = []
+        for r in res.get("output1") or []:
+            rows.append({"odno": r.get("odno", ""), "symbol": r.get("pdno", ""),
+                         "side": "sell" if r.get("sll_buy_dvsn_cd") == "01" else "buy",
+                         "ord_qty": int(r.get("ord_qty", 0)), "filled_qty": int(r.get("tot_ccld_qty", 0)),
+                         "avg_price": float(r.get("avg_prvs", 0) or 0), "canceled": r.get("cncl_yn") == "Y"})
+        return rows

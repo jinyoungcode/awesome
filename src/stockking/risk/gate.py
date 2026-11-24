@@ -206,3 +206,7 @@ class RiskGate:
     def _register(self, order: OrderRequest, now: datetime) -> None:
         self._recent_orders.append(now)
         self._seen_order_ids.add(order.client_order_id)
+
+    def preload_order_ids(self, order_ids) -> None:
+        """재시작 복구: 감사 로그에 남은 주문번호를 다시 등록해 같은 번호의 재전송을 막는다."""
+        self._seen_order_ids.update(order_ids)
