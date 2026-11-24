@@ -86,7 +86,7 @@ def test_load_bars_converts_usd_to_krw(tmp_path):
     csv.write_text("date,symbol,open,high,low,close,volume,currency\n"
                    "2025-01-02,5930,70000,71000,69000,70500,100,KRW\n"
                    "2025-01-02,aapl,10.00,10.50,9.80,10.20,500,USD\n", encoding="utf-8")
-    fx = FxRates({date(2025, 1, 2): 1450})
+    fx = FxRates({date(2024, 12, 31): 1450})  # 기본: bar 날짜보다 앞선 환율만 사용
     kr, us = load_bars_csv(csv, fx)
     assert (kr.symbol, kr.close) == ("005930", 70_500)
     assert (us.symbol, us.open, us.high, us.low, us.close) == ("AAPL", 14_500, 15_225, 14_210, 14_790)
@@ -194,3 +194,71 @@ def test_us_order_requires_usd_price_and_exchange(kwargs):
 def test_us_market_order_refused():
     with pytest.raises(ValueError):
         _client([]).build_us_order_body(OrderRequest("AAPL", Side.BUY, 1, OrderType.MARKET))
+
+
+# --- 환율 look-ahead 방지 (Codex 리뷰 요청 회귀 테스트) ------------------------
+
+def _usd_csv(tmp_path):
+    csv = tmp_path / "bars.csv"
+    csv.write_text("date,symbol,open,high,low,close,volume,currency\n"
+                   "2025-01-03,AAPL,10.00,10.00,10.00,10.00,500,USD\n", encoding="utf-8")
+    return csv
+
+
+def test_same_day_fx_fixed_after_fill_is_not_used_by_default(tmp_path):
+    # 1/3 환율(1500)은 1/3 체결 이후에 확정된다고 가정 → 기본 로드는 1/2 환율(1400)만 써야 한다
+    fx = FxRates({date(2025, 1, 2): 1400, date(2025, 1, 3): 1500})
+    (bar,) = load_bars_csv(_usd_csv(tmp_path), fx)
+    assert bar.open == 14_000
+
+
+def test_same_day_fx_only_when_explicitly_allowed(tmp_path):
+    fx = FxRates({date(2025, 1, 2): 1400, date(2025, 1, 3): 1500})
+    (bar,) = load_bars_csv(_usd_csv(tmp_path), fx, fx_same_day=True)
+    assert bar.open == 15_000
+
+
+def test_no_prior_fx_fails_closed(tmp_path):
+    fx = FxRates({date(2025, 1, 3): 1500})  # 같은 날 환율뿐 → 기본 정책에서는 쓸 수 있는 환율이 없음
+    with pytest.raises(KeyError):
+        load_bars_csv(_usd_csv(tmp_path), fx)
+
+
+def test_fx_strictly_before():
+    fx = FxRates({date(2025, 1, 2): 1400, date(2025, 1, 3): 1500})
+    assert fx.rate(date(2025, 1, 3)) == Decimal(1500)
+    assert fx.rate(date(2025, 1, 3), strictly_before=True) == Decimal(1400)
+
+
+# --- D-005 사이징 → 실제 체결 경로 (Codex 리뷰 요청) ----------------------------
+
+class SizedBuyer:
+    """sizing.shares_for_target 으로 수량을 정해 주문하는 테스트 전략(엔진·리스크 관문 실경로 검증용)."""
+    strategy_id = "sized"
+
+    def __init__(self, symbols, starting_cash):
+        self.symbols, self.start, self.done = symbols, starting_cash, False
+
+    def on_bar_close(self, ctx):
+        if self.done:
+            return []
+        self.done = True
+        target = order_target(self.start, 0)
+        out = []
+        for s in self.symbols:
+            qty = shares_for_target(ctx.history[s][-1].close, target)
+            if qty:
+                out.append(TargetOrder(s, Side.BUY, qty))
+        return out
+
+
+def test_sizing_orders_fill_through_engine_and_risk_gate_within_band():
+    days = [date(2025, 1, 2), date(2025, 1, 3)]
+    prices = {"005930": 7_000, "000660": 9_500, "035420": 30_000}  # 3주=21,000 / 2주=19,000 / 불가
+    bars = [Bar(d, s, p, p, p, p, 100) for d in days for s, p in prices.items()]
+    res = BacktestEngine(BacktestConfig(START, CostModel(0, 0, 0, source="test"))).run(
+        SizedBuyer(list(prices), START), bars)
+    assert not res.rejected, res.rejected
+    filled = {f.symbol: f.quantity * f.price for f in res.fills}
+    assert filled == {"005930": 21_000, "000660": 19_000}  # 30,000원 종목은 정수로 범위 불가 → 주문 안 함
+    assert all(within_band(v, 20_000) for v in filled.values())

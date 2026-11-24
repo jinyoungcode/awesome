@@ -58,14 +58,18 @@ class FxRates:
         self._days = sorted(usdkrw)
         self._rates = {d: Decimal(str(v)) for d, v in usdkrw.items()}
 
-    def rate(self, day: date) -> Decimal:
-        if day in self._rates:
-            return self._rates[day]
-        prior = [d for d in self._days if d <= day]
+    def rate(self, day: date, strictly_before: bool = False) -> Decimal:
+        """day 에 쓸 환율.
+
+        strictly_before=True 이면 day 보다 **앞선** 날짜의 환율만 쓴다(look-ahead 방지).
+        같은 날짜 환율이 체결 이후에 확정되는 소스(예: 뉴욕 정오 환율)로 미국 주식 체결가를 환산할 때 필요하다.
+        """
+        prior = [d for d in self._days if (d < day if strictly_before else d <= day)]
         if not prior:
-            raise KeyError(f"{day} 이전 환율이 없습니다")
+            raise KeyError(f"{day} {'이전' if strictly_before else '이하'} 날짜의 환율이 없습니다")
         return self._rates[prior[-1]]
 
-    def to_krw(self, usd: Decimal | float | str, day: date) -> int:
+    def to_krw(self, usd: Decimal | float | str, day: date, strictly_before: bool = False) -> int:
         """USD 금액 → 원 정수(반올림)."""
-        return int((Decimal(str(usd)) * self.rate(day)).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        rate = self.rate(day, strictly_before)
+        return int((Decimal(str(usd)) * rate).quantize(Decimal(1), rounding=ROUND_HALF_UP))

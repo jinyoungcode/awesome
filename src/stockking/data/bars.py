@@ -3,7 +3,11 @@
 CSV 컬럼: date,symbol,open,high,low,close,volume[,currency]
 - date=YYYY-MM-DD, 수정주가 기준
 - currency 생략 또는 KRW: 가격은 원 정수
-- currency=USD(미국 주식, D-006): 가격은 달러(소수 허용). 로드 시 해당 일자 USD/KRW 환율로 원 정수 환산
+- currency=USD(미국 주식, D-006): 가격은 달러(소수 허용). 로드 시 USD/KRW 환율로 원 정수 환산
+
+환율 시점(look-ahead 방지): 기본값은 **bar 날짜보다 앞선 날짜의 환율**만 쓴다(fx_same_day=False).
+같은 날짜 환율이 그날 미국장 시가 전에 확정되는 소스(예: 서울 외환시장 종가·고시환율, KST 날짜 기준)를
+쓸 때만 fx_same_day=True 로 둔다. 소스 선정과 날짜 기준은 자료수집팀 확정 사항이다.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ class Bar:
             raise ValueError(f"음수 거래량: {self}")
 
 
-def load_bars_csv(path: str | Path, fx: FxRates | None = None) -> list[Bar]:
+def load_bars_csv(path: str | Path, fx: FxRates | None = None, fx_same_day: bool = False) -> list[Bar]:
     bars: list[Bar] = []
     with Path(path).open(encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
@@ -45,7 +49,7 @@ def load_bars_csv(path: str | Path, fx: FxRates | None = None) -> list[Bar]:
             elif currency == "USD":
                 if fx is None:
                     raise ValueError("USD 가격 데이터에는 환율(FxRates)이 필요합니다")
-                conv = lambda v, d=day: fx.to_krw(Decimal(v), d)  # noqa: E731
+                conv = lambda v, d=day: fx.to_krw(Decimal(v), d, strictly_before=not fx_same_day)  # noqa: E731
             else:
                 raise ValueError(f"지원하지 않는 통화: {currency}")
             bars.append(Bar(day, normalize_symbol(r["symbol"]), conv(r["open"]), conv(r["high"]),
