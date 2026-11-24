@@ -87,10 +87,20 @@ def run(workdir: Path) -> Checklist:
     return cl
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from .common import journal_path
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--operator", default="", help="지정하면 결과를 오늘 감사 로그에 훈련 기록으로 남김(C5 근거)")
+    a = ap.parse_args(argv)
     print("재시작 복구 훈련 (오프라인, 증권사 접속 없음)")
     with tempfile.TemporaryDirectory() as d:
-        return run(Path(d)).finish()
+        cl = run(Path(d))
+    if a.operator:
+        Journal(journal_path()).write("drill", kind="restart", operator=a.operator, passed=cl.passed,
+                                      note="오프라인 훈련. 실제 장중 재시작 실습은 PAPER_RUNBOOK §2")
+    return cl.finish()
 
 
 if __name__ == "__main__":

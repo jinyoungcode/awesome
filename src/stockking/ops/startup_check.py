@@ -25,7 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     paths = sorted(Path(a.journal_dir).glob("*.jsonl"))
     if a.resolve:
-        record_resolution(Journal(journal_path()), a.resolve, a.outcome or "", a.operator, a.note)
+        j = Journal(journal_path())
+        record_resolution(j, a.resolve, a.outcome or "", a.operator, a.note)
+        j.write("drill", kind="restart", operator=a.operator, passed=True, note=f"장중 재시작 후 {a.resolve} 확인 처리")
         print(f"기록함: {a.resolve} → {a.outcome} (확인자 {a.operator})")
     rep = scan_journal(paths)
     blockers = startup_blockers(rep, KillSwitch())

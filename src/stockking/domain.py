@@ -85,6 +85,8 @@ class AccountSnapshot:
     start_of_day_equity: int              # 당일 시작 평가금액 (일 손실 한도 계산 기준)
     start_of_week_equity: int | None = None
     start_of_month_equity: int | None = None
+    principal: int | None = None          # 투입 원금 (최종 손절 기준, D-016)
+    peak_equity: int | None = None        # 계좌 최고 평가금 (사이징 축소 기준, D-016)
 
     @property
     def equity(self) -> int:

@@ -47,14 +47,16 @@ def main(argv: list[str] | None = None) -> int:
 
     cl = Checklist(f"일일 대사 {a.date}")
     cl.check("시스템 접수 주문이 증권사 내역과 일치", not diff["missing_at_broker"], f"불일치 {diff['missing_at_broker']}")
-    cl.check("시스템이 모르는 주문 없음(수동 매매는 별도 분리)", not diff["unknown_to_system"],
-             f"미기록 {diff['unknown_to_system']}")
+    # D-029/D-030: 전용 계좌에서 수동 매매는 원칙적으로 없어야 함. 감지되면 별도 집계 대상으로 표시하고 미통과 처리
+    cl.check("시스템이 모르는 주문 없음 (있으면 수동 매매로 분리 집계, D-029)", not diff["unknown_to_system"],
+             f"수동/미기록 {diff['unknown_to_system']}")
     cl.check("중복 주문 0건", not diff["duplicate_broker_ids"], f"{diff['duplicate_broker_ids']}")
     cl.check("미확인 주문 0건", not rep.unresolved, f"{list(rep.unresolved)}")
 
     out = Path("var/reconcile") / f"{a.date}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"date": a.date, "balance": bal, "broker_orders": rows, "diff": diff,
+                               "manual_orders": [r for r in rows if r["odno"].lstrip("0") in diff["unknown_to_system"]],
                                "passed": cl.passed}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"저장: {out}  (예수금 {bal['cash']:,}원, 총평가 {bal['total_equity']:,}원, 주문 {len(rows)}건)")
     return cl.finish()
