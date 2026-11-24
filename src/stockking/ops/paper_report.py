@@ -3,7 +3,7 @@
 python -m stockking.ops.paper_report
 
 근거 자료: var/journal/*.jsonl (주문·훈련 기록), var/reconcile/*.json (일일 대사)
-C1 은 ledger_close 대사 결과(var/reconcile/ledger_*.json), C2 신호 일치는 S02 자동 실행기 준비 후 자동 판정.
+C1 은 ledger_close 대사 결과(var/reconcile/ledger_*.json), C2 는 s02_runner verify 결과(signal_*.json).
 """
 
 from __future__ import annotations
@@ -19,17 +19,22 @@ RECONCILE_DIR = Path("var/reconcile")
 
 
 def build_report(records: list[dict], reconciles: list[dict], recovery,
-                 ledgers: list[dict] | None = None) -> list[tuple[str, str, str]]:
+                 ledgers: list[dict] | None = None, signals: list[dict] | None = None) -> list[tuple[str, str, str]]:
     """(항목, 상태 PASS/FAIL/PENDING, 근거) 목록."""
     rows = []
-    ledgers = ledgers or []
+    ledgers, signals = ledgers or [], signals or []
     if not ledgers:
         rows.append(("C1 장부·잔고 대사 100%", "PENDING", "장부 대사 기록 없음 (ledger_close --open/--close)"))
     else:
         bad_l = [x["date"] for x in ledgers if x.get("recon_status") != "OK"]
         rows.append(("C1 장부·잔고 대사 100%", "PASS" if not bad_l else "FAIL",
                      f"대사 {len(ledgers)}일, 불일치일 {bad_l or '없음'}"))
-    rows.append(("C2 신호 일치 100%", "PENDING", "S02 자동 실행기·신호 비교 리포트 구현 후"))
+    if not signals:
+        rows.append(("C2 신호 일치 100%", "PENDING", "신호 비교 기록 없음 (s02_runner verify)"))
+    else:
+        bad_s = [x["date"] for x in signals if not x.get("match")]
+        rows.append(("C2 신호 일치 100%", "PASS" if not bad_s else "FAIL",
+                     f"비교 {len(signals)}일, 불일치일 {bad_s or '없음'}"))
     bad = [r["date"] for r in reconciles if not r.get("passed")]
     dup_or_unknown = sum(len(r["diff"]["duplicate_broker_ids"]) + len(r["diff"]["missing_at_broker"])
                          for r in reconciles)
@@ -62,7 +67,8 @@ def main() -> int:
     records = load_records()
     reconciles = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("[0-9]*.json"))]
     ledgers = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("ledger_*.json"))]
-    rows = build_report(records, reconciles, scan_journal(sorted(JOURNAL_DIR.glob("*.jsonl"))), ledgers)
+    signals = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("signal_*.json"))]
+    rows = build_report(records, reconciles, scan_journal(sorted(JOURNAL_DIR.glob("*.jsonl"))), ledgers, signals)
     print("D-024 3일 모의 점검표")
     for name, st, why in rows:
         print(f"  [{st:7}] {name} — {why}")
