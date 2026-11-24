@@ -2,7 +2,7 @@
 
 | 1차 과업 | 문서 | 상태 (2026-11-24) |
 |---|---|---|
-| 1. 자금 계획표 | [FUNDING_PLAN.md](FUNDING_PLAN.md) | **v0.2** — 단계·금액 확정(D-014·D-023·D-028·D-030). 대표 결정 대기: Q-2, Q-4(증액 전), **Q-6~Q-8(신규)** |
+| 1. 자금 계획표 | [FUNDING_PLAN.md](FUNDING_PLAN.md) | **v0.2** — 단계 확정(D-014·D-023·D-028·D-030), T0 입금 15만 원(D-031, 운용 기준 확인 중). 대표 결정 대기: Q-2, Q-4(증액 전), **Q-6~Q-8(신규)** |
 | 2. 거래 비용 모델 | [COST_MODEL.md](COST_MODEL.md) | **v0.2** — 한투 기준 국내·미국 비용, 해외주식 양도세, ETF. 미확정: 환전 스프레드(C-4), 과거 세율 A 확정(C-1) |
 | 3. 장부 양식 | [ledger/README.md](ledger/README.md) + `ledger/*.csv` | **v0.2** — 원화·달러, 자동/수동 분리(D-029), 환전·세금 충당금 장부 추가 |
 | 4. 월간 결산 보고서 양식 | [MONTHLY_REPORT_TEMPLATE.md](MONTHLY_REPORT_TEMPLATE.md) | **v0.2** — 시장별·자동/수동·D-028 한도 반영 |
