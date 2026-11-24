@@ -38,6 +38,8 @@ class RiskLimits:
     us_price_band_pct: float | None = None  # 미국: 가격제한폭 없음 → 기본 검사 생략(값을 주면 적용)
     allow_market_orders: bool = False       # 시장가 기본 금지(모의투자 일부 미지원·슬리피지)
     kill_on_daily_loss: bool = True
+    # D-016/D-028: 원금 대비 이 비율 손실 시 최종 손절(킬스위치). None = 검사 안 함
+    final_stop_pct: float | None = 0.20
 
 
 @dataclass(frozen=True)
@@ -129,8 +131,9 @@ class RiskGate:
         L = self.limits
         reasons: list[str] = []
 
-        # 0. 킬스위치 — 발동 중이면 매수·매도 모두 차단(청산은 사람이 수동 판단)
-        if self.kill_switch.is_tripped():
+        # 0. 킬스위치 — 발동 중 신규 매수 차단. 보유분을 줄이는 손절·청산 매도는 허용(D-026)
+        #    매도도 아래 공매도 금지(보유 수량 이내)·가격·중복 검사는 그대로 받는다.
+        if self.kill_switch.is_tripped() and order.side is Side.BUY:
             return [f"KILL_SWITCH: {self.kill_switch.reason()}"]
 
         # 1. 멱등성 — 같은 client_order_id 재전송 차단
@@ -170,14 +173,23 @@ class RiskGate:
             ("WEEKLY", account.start_of_week_equity, L.max_weekly_loss_pct),
             ("MONTHLY", account.start_of_month_equity, L.max_monthly_loss_pct),
         ]
+        # 5-0. 최종 손절(D-016/D-028): 원금 대비 -20% → 킬스위치(시스템 정지). 청산 매도는 허용(D-026)
+        if account.principal and L.final_stop_pct is not None:
+            loss = (account.principal - equity) / account.principal
+            if loss >= L.final_stop_pct:
+                self.kill_switch.trip(f"FINAL_STOP: 원금 대비 {loss:.2%} >= {L.final_stop_pct:.0%}")
+                if order.side is Side.BUY:
+                    return [f"FINAL_STOP: 원금 대비 {loss:.2%} 손실 → 전량 청산·시스템 정지"]
         for name, base, limit in loss_checks:
-            if not base:
+            if not base or limit is None:
                 continue
             drawdown = (base - equity) / base
             if drawdown >= limit:
                 if name == "DAILY" and L.kill_on_daily_loss:
                     self.kill_switch.trip(f"daily loss {drawdown:.2%} >= {limit:.2%}")
-                    return [f"{name}_LOSS_LIMIT: {drawdown:.2%} >= {limit:.2%} → KILL_SWITCH 발동"]
+                    if order.side is Side.BUY:
+                        return [f"{name}_LOSS_LIMIT: {drawdown:.2%} >= {limit:.2%} → KILL_SWITCH 발동"]
+                    continue
                 if order.side is Side.BUY:
                     reasons.append(f"{name}_LOSS_LIMIT: {drawdown:.2%} >= {limit:.2%}")
 
@@ -210,3 +222,7 @@ class RiskGate:
     def _register(self, order: OrderRequest, now: datetime) -> None:
         self._recent_orders.append(now)
         self._seen_order_ids.add(order.client_order_id)
+
+    def preload_order_ids(self, order_ids) -> None:
+        """재시작 복구: 감사 로그에 남은 주문번호를 다시 등록해 같은 번호의 재전송을 막는다."""
+        self._seen_order_ids.update(order_ids)
