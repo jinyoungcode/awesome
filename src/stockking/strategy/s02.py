@@ -1,7 +1,8 @@
 """S02 상승추세 눌림목 반등(MR-PB) — 신호 생성 골격.
 
-근거: teams/04-trading/strategies/S02_MR_PULLBACK.md v0.1, COMMON_SPEC.md §3~§5, §8, §11~§13, §15
-(claude/stock-king-04-trading 브랜치). 매매팀이 15만 원 기준 수치를 확정하면 파라미터만 바꾼다.
+근거: teams/04-trading/strategies/S02_MR_PULLBACK.md **v1.0 (spec freeze, bcad9b6)**, COMMON_SPEC.md §3~§5, §8, §11~§13, §15
+(claude/stock-king-04-trading 브랜치). v1.0 은 v0.1 대비 신호 규칙(§1~§8) 변경 없음, §10 사이징 예제(15만 원)·미국 유니버스만 변경.
+15만 원 D-005 사이징은 strategy/d005_sizer.py.
 
 이 모듈은 '무엇을 사고팔지'만 정한다. 수량(D-005 사이징·D-021/D-025 1주 예외)은 주입된 sizer 가
 정하고(PR #2 sizing.py 병합 후 연결), 주문 전 리스크 관문은 OrderRouter 가 맡는다.

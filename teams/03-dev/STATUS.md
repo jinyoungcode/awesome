@@ -81,3 +81,9 @@
 - `ledger.py` + `ops/ledger_close.py`: 회계팀 장부 v0.2 필드 그대로 trades/positions/daily_pnl 작성(국내), book=AUTO/MANUAL(감사 로그 주문번호 매칭, D-029), T_TECH reason_code(D-027), 결제일 T+2, 장 시작 스냅샷 + 당일 체결 = 마감 잔고 1원·1주 대사 → C1 자동 판정
 - 남은 일(PR #2 병합 후): S02 수량·주문 제출·15:15 LDAY 취소 실행기, 신호 일치(C2) 비교, 미국 장부 필드(환율·SEC fee·FINRA TAF), CostModel 미국 수수료 필드
 - 테스트 91개 통과
+
+## 2026-11-24 — S02 v1.0 대조, D-033~D-035
+
+- S02 v1.0(bcad9b6) 대조: 신호 규칙(§1~§8)은 v0.1과 같아 `s02.py` 로직 변경 없음(버전 표기만 갱신). §10 15만 원 사이징은 `strategy/d005_sizer.py` + v1.0 예제 3건 테스트(PR #2 `sizing.py` 필요 → 병합 전 자동 건너뜀, PR #2와 합친 상태에서 통과 확인)
+- D-035: `US_DAYTRADING_COST_VALIDATION.md` 초안 — 비용 실측 항목·절차, 별도 검증 구간, 비용 시나리오 S0~S4·손익분기, 판정 제안, 재현 절차
+- `.gitattributes`(INBOX.md merge=union) — 총괄 d8dee39와 동일 내용
