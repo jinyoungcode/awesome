@@ -21,12 +21,14 @@
 
 | 시각 | 명령 | 목적 |
 |---|---|---|
+| 08:25 | `python -m stockking.ops.ledger_close --open` | 장부 시작점 저장 (증권사 D+2 예수금·보유수량) |
 | 08:30 | `python -m stockking.ops.startup_check` | 킬스위치·미확인 주문·로그 손상 확인 → "시작 가능"이어야 진행 |
 | 08:35 | `python -m stockking.ops.connect_check` | 토큰·현재가·잔고 (주문 없음) |
 | 장중 1회 (1일차) | `python -m stockking.ops.connect_check --order` | 1주 지정가 주문 → 즉시 취소 → 내역 확인 |
 | 장중 (1일차) | `python -m stockking.ops.killswitch_drill --operator 대표 --kis` | 실제 모의 계좌로 킬스위치 훈련 (주문 0건 전송) |
 | 장중 (1일차) | 아래 §2 재시작 실습 | 실제 재시작 복구 |
 | 15:40 | `python -m stockking.ops.daily_reconcile` | 주문 내역 대사·중복·수동/미기록 주문 확인(D-029) → `var/reconcile/날짜.json` |
+| 15:45 | `python -m stockking.ops.ledger_close --close` | 회계팀 양식 장부(trades·positions·daily_pnl) 작성 + 현금 1원·수량 1주 단위 대사 (C1) |
 | 15:50 | `python -m stockking.ops.paper_report` | D-024 점검표 C1~C6 현황 |
 | 2일차 15:50 | `python -m stockking.ops.tech_orders --check` | D-027 발동 조건 판정 (S02 주문 3건 미만·매수 체결 0·청산 미실행) |
 
@@ -59,9 +61,9 @@ T4(미국)·T5(1주 예외)는 PR #2 병합과 D-021/D-025 구현 후에 추가�
 | 킬스위치 1회 훈련 | 매수 차단·**청산 매도 허용(D-026)**·0건 전송·자동발동·수동해제 | `killswitch_drill --kis` | ✅ 준비됨 |
 | 재시작 복구 확인 | 미확인 주문 식별, 중복 차단, 킬스위치 유지 | `restart_drill` + §2 실습 | ✅ 준비됨 |
 | 오주문·중복 0건 | 증권사 내역 ↔ 감사 로그 | `daily_reconcile` | ✅ 준비됨 |
-| 장부·잔고 대사 100% | 증권사 잔고 ↔ 시스템 장부 | `daily_reconcile`이 잔고 저장 | ⚠ 부분 — **회계팀 장부 양식** 수령 후 자동 비교 추가 |
+| 장부·잔고 대사 100% | 시작점 + 당일 체결 = 증권사 마감 잔고 (1원·1주) | `ledger_close --open/--close` | ✅ 준비됨 (국내. 수수료는 체결내역 값 확인 전 추정치 → C-2 실측으로 확정) |
 | 모의 주문 5건 이상 | S02 주문 + 부족분 T_TECH(D-027) | 전략 자동 실행기 + `tech_orders` | ⚠ T1~T3 준비됨, S02 자동 실행기 **미구현**(S02 명세서 + PR #2 병합 필요) |
-| 신호 일치 100% | 같은 날 백테스트 신호 = 모의 주문 | 신호 비교 리포트 | ❌ **미구현** — 위와 같음 |
+| 신호 일치 100% | 같은 데이터로 다시 만든 주문계획 = 실제 주문 | S02 주문계획(`strategy/s02.py`) + 비교 리포트 | ⚠ S02 신호·주문계획 골격 완료, 수량(D-005 사이징)·주문 제출·비교 리포트는 PR #2 병합 후 |
 
 **3일 일정의 위험:** 전략 자동 실행기(S02 신호 → 주문)는 매매팀 S02 명세서와 PR #2 병합이 있어야 만들 수 있습니다. 둘이 늦어지면 1일차는 연결·훈련만 하고, 2~3일차에 주문 5건과 신호 일치를 확인하는 일정이 빠듯해집니다. 미통과 시 연장(총괄 권고)을 전제로 합니다.
 

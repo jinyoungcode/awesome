@@ -161,7 +161,8 @@ def test_kis_balance_parsing():
                                      {"pdno": "000660", "hldg_qty": "0", "pchs_avg_pric": "0"}],
                          "output2": [{"dnca_tot_amt": "9790000", "tot_evlu_amt": "10000000"}]}])
     b = c.inquire_balance()
-    assert b == {"cash": 9_790_000, "total_equity": 10_000_000, "positions": {"005930": (3, 70000.0)}}
+    assert (b["cash"], b["total_equity"], b["positions"]) == (9_790_000, 10_000_000, {"005930": (3, 70000.0)})
+    assert b["details"]["005930"]["qty"] == 3 and b["cash_d2"] == 9_790_000
     assert calls[-1][2]["tr_id"].startswith("V")
 
 
@@ -187,6 +188,7 @@ def test_kis_daily_orders_parsing():
     c, _ = _client([{"rt_cd": "0", "output1": [{"odno": "0000123", "pdno": "005930", "sll_buy_dvsn_cd": "02",
                                                 "ord_qty": "1", "tot_ccld_qty": "0", "avg_prvs": "0",
                                                 "cncl_yn": "Y"}]}])
-    assert c.inquire_daily_orders("20261125") == [{"odno": "0000123", "symbol": "005930", "side": "buy",
-                                                    "ord_qty": 1, "filled_qty": 0, "avg_price": 0.0,
-                                                    "canceled": True}]
+    r = c.inquire_daily_orders("20261125")[0]
+    assert {k: r[k] for k in ("odno", "symbol", "side", "ord_qty", "filled_qty", "avg_price", "canceled")} == {
+        "odno": "0000123", "symbol": "005930", "side": "buy", "ord_qty": 1, "filled_qty": 0, "avg_price": 0.0,
+        "canceled": True}

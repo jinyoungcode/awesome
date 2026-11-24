@@ -167,8 +167,15 @@ class KisPaperClient:
         positions = {r["pdno"]: (int(r.get("hldg_qty", 0)), float(r.get("pchs_avg_pric", 0)))
                      for r in res.get("output1") or [] if int(r.get("hldg_qty", 0)) > 0}
         summary = (res.get("output2") or [{}])[0]
+        details = {r["pdno"]: {"name": r.get("prdt_name", ""), "qty": int(r.get("hldg_qty", 0)),
+                               "avg_cost": float(r.get("pchs_avg_pric", 0) or 0),
+                               "close_price": int(float(r.get("prpr", 0) or 0)),
+                               "market_value": int(float(r.get("evlu_amt", 0) or 0))}
+                   for r in res.get("output1") or [] if int(r.get("hldg_qty", 0)) > 0}
         return {"cash": int(summary.get("dnca_tot_amt", 0)), "total_equity": int(summary.get("tot_evlu_amt", 0)),
-                "positions": positions}
+                # D+2 예수금(가수도정산) — 당일 체결이 반영된 현금. 장부 현금 대사 기준 (필드명 재확인 필요)
+                "cash_d2": int(summary.get("prvs_rcdl_excc_amt", summary.get("dnca_tot_amt", 0)) or 0),
+                "positions": positions, "details": details}
 
     def cancel_order(self, broker_order_id: str, symbol: str, quantity: int,
                      krx_org_no: str | None = None) -> BrokerOrderResult:
@@ -192,7 +199,8 @@ class KisPaperClient:
                                       "CTX_AREA_FK100": "", "CTX_AREA_NK100": ""}), "주문체결 조회")
         rows = []
         for r in res.get("output1") or []:
-            rows.append({"odno": r.get("odno", ""), "symbol": r.get("pdno", ""),
+            rows.append({"odno": r.get("odno", ""), "symbol": r.get("pdno", ""), "name": r.get("prdt_name", ""),
+                         "ord_date": r.get("ord_dt", yyyymmdd),
                          "side": "sell" if r.get("sll_buy_dvsn_cd") == "01" else "buy",
                          "ord_qty": int(r.get("ord_qty", 0)), "filled_qty": int(r.get("tot_ccld_qty", 0)),
                          "avg_price": float(r.get("avg_prvs", 0) or 0), "canceled": r.get("cncl_yn") == "Y"})

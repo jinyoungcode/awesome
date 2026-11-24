@@ -73,3 +73,11 @@
 - `risk/stages.py`: `STARTING_CAPITAL=150_000`, `operating_capital()`(환경변수로 변경 가능), 모의 계좌 평가금과 운용 기준 자금이 ±20% 넘게 다르면 경고
 - 운영 스크립트(`connect_check`, `tech_orders`)가 경고 출력, `PAPER_RUNBOOK.md` 시작금 15만 원으로 갱신
 - 미결 위험: KIS 모의 계좌 기본 예수금이 15만 원보다 훨씬 크면 한도가 계좌 전체 기준으로 계산됨 → S02 실행기에서 운용 기준 자금(15만 원) 가상 장부로 계산하도록 설계 예정
+
+## 2026-11-24 — S02 실행기 골격 + C1 장부 자동 대사
+
+- `indicators.py`: SMA, Wilder RSI(워밍업 50봉), RET — COMMON_SPEC §5 정의
+- `strategy/s02.py`: E1~E7 진입(순위: RSI↑·ADV20↓·코드), X_STOP→X_TP→X_TIME 청산(X_ADMIN/X_KILL 최우선), 데이터 QC 실패 시 청산만, 슬롯 = min(6, 5 − 보유), 주문계획 CSV(§12.1). 수량은 sizer 주입식 — PR #2 `sizing.py` + D-021/D-025 병합 후 연결
+- `ledger.py` + `ops/ledger_close.py`: 회계팀 장부 v0.2 필드 그대로 trades/positions/daily_pnl 작성(국내), book=AUTO/MANUAL(감사 로그 주문번호 매칭, D-029), T_TECH reason_code(D-027), 결제일 T+2, 장 시작 스냅샷 + 당일 체결 = 마감 잔고 1원·1주 대사 → C1 자동 판정
+- 남은 일(PR #2 병합 후): S02 수량·주문 제출·15:15 LDAY 취소 실행기, 신호 일치(C2) 비교, 미국 장부 필드(환율·SEC fee·FINRA TAF), CostModel 미국 수수료 필드
+- 테스트 91개 통과
