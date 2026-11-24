@@ -16,6 +16,7 @@ from datetime import date, datetime, time, timedelta
 
 from ..data import Bar
 from ..domain import AccountSnapshot, Fill, OrderRequest, OrderType, Position, Side
+from ..market import Market, market_of
 from ..risk import KillSwitch, RiskGate, RiskLimits
 from ..strategy import Strategy, StrategyContext, TargetOrder
 from . import metrics
@@ -27,6 +28,11 @@ class BacktestConfig:
     initial_cash: int
     cost_model: CostModel
     risk_limits: RiskLimits = field(default_factory=RiskLimits)
+    # 시장별 비용 모델(D-006). 없는 시장은 cost_model 을 쓴다. 미국 bar 가격은 원화 환산값이어야 한다.
+    market_cost_models: dict[Market, CostModel] = field(default_factory=dict)
+
+    def cost_for(self, symbol: str) -> CostModel:
+        return self.market_cost_models.get(market_of(symbol), self.cost_model)
 
 
 @dataclass
@@ -40,11 +46,19 @@ class BacktestResult:
     total_tax: int
     traded_value: int
     warnings: list[str]
+    starting_cash: int | None = None
 
     def summary(self) -> dict:
         eq = [v for _, v in self.equity_curve]
         first, last = self.equity_curve[0][0], self.equity_curve[-1][0]
         rets = metrics.daily_returns(eq)
+        target_baseline = self.starting_cash if self.starting_cash is not None else eq[0]
+        target_returns = metrics.daily_returns([target_baseline, *eq])
+        # Compare equity in whole KRW so an exact 5% gain counts.
+        target_hits = sum(current * 100 >= previous * 105
+                          for previous, current in zip([target_baseline, *eq], eq)
+                          if previous > 0)
+        observed_days = len(target_returns)
         avg_eq = sum(eq) / len(eq)
         years = max((last - first).days / 365.25, 1e-9)
         return {
@@ -54,6 +68,11 @@ class BacktestResult:
             "cagr": metrics.cagr(eq[0], eq[-1], first, last),
             "mdd": metrics.max_drawdown(eq),
             "sharpe": metrics.sharpe(rets),
+            "daily_target_return": 0.05,
+            "daily_observed_days": observed_days,
+            "daily_average_return": sum(target_returns) / observed_days if observed_days else 0.0,
+            "daily_target_hit_days": target_hits,
+            "daily_target_hit_rate": target_hits / observed_days if observed_days else 0.0,
             **metrics.trade_stats(self.realized_pnls),
             "annual_turnover": self.traded_value / avg_eq / years if avg_eq else 0.0,
             "total_commission": self.total_commission,
@@ -69,7 +88,6 @@ class BacktestEngine:
         self.cfg = config
 
     def run(self, strategy: Strategy, bars: list[Bar]) -> BacktestResult:
-        cost = self.cfg.cost_model
         gate = RiskGate(self.cfg.risk_limits, KillSwitch(memory_only=True))
         by_date: dict[date, dict[str, Bar]] = defaultdict(dict)
         for b in bars:
@@ -89,7 +107,9 @@ class BacktestEngine:
         kills: list[date] = []
         curve: list[tuple[date, int]] = []
         tot_comm = tot_tax = traded = 0
-        warnings = [] if cost.source != "UNCONFIRMED" else ["비용모델 미확정(UNCONFIRMED) — 회계팀 COST_MODEL.md 확정 필요"]
+        models = [self.cfg.cost_model, *self.cfg.market_cost_models.values()]
+        warnings = ([] if all(m.source != "UNCONFIRMED" for m in models)
+                    else ["비용모델 미확정(UNCONFIRMED) — 회계팀 COST_MODEL.md 확정 필요"])
         week_base = month_base = None
         prev_day: date | None = None
 
@@ -113,6 +133,7 @@ class BacktestEngine:
                 if bar is None or bar.volume == 0:
                     rejected.append((day, t, ("NO_TRADE: 거래정지/데이터 없음",)))
                     continue
+                cost = self.cfg.cost_for(t.symbol)
                 px = cost.slipped_price(bar.open, t.side is Side.BUY)
                 order = OrderRequest(t.symbol, t.side, t.quantity, OrderType.LIMIT, px, strategy.strategy_id)
                 snap = AccountSnapshot(cash, {s: Position(p.symbol, p.quantity, p.avg_price) for s, p in positions.items()},
@@ -160,4 +181,5 @@ class BacktestEngine:
             pending = list(strategy.on_bar_close(ctx))
             prev_day = day
 
-        return BacktestResult(curve, fills, rejected, realized, kills, tot_comm, tot_tax, traded, warnings)
+        return BacktestResult(curve, fills, rejected, realized, kills, tot_comm, tot_tax, traded, warnings,
+                              starting_cash=self.cfg.initial_cash)

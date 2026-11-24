@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..domain import AccountSnapshot, OrderRequest, OrderType, Side
+from ..market import Market, market_of
 
 
 @dataclass(frozen=True)
@@ -28,11 +29,13 @@ class RiskLimits:
     max_daily_loss_pct: float = 0.02        # 당일 시작 평가금 대비 -2% 도달 시 신규 매수 중단 + 킬스위치
     max_weekly_loss_pct: float = 0.04
     max_monthly_loss_pct: float = 0.08
-    max_position_weight: float = 0.20       # 1종목 최대 비중(주문 후 기준)
+    # 1종목 최대 비중(주문 후 기준). D-005: 주문 목표(자산÷5=20%)의 +10%까지 허용하므로 22%.
+    max_position_weight: float = 0.22
     max_open_positions: int = 5             # 최대 동시 보유 종목 수
     max_order_value: int = 2_000_000        # 1회 주문 최대 금액(원)
     max_orders_per_minute: int = 10         # 폭주 방지(무한루프 주문 차단)
-    price_band_pct: float = 0.30            # 기준가 대비 ±30%(가격제한폭) 밖 지정가 거부
+    price_band_pct: float = 0.30            # 국내: 기준가 대비 ±30%(가격제한폭) 밖 지정가 거부
+    us_price_band_pct: float | None = None  # 미국: 가격제한폭 없음 → 기본 검사 생략(값을 주면 적용)
     allow_market_orders: bool = False       # 시장가 기본 금지(모의투자 일부 미지원·슬리피지)
     kill_on_daily_loss: bool = True
     # D-016/D-028: 원금 대비 이 비율 손실 시 최종 손절(킬스위치). None = 검사 안 함
@@ -154,8 +157,9 @@ class RiskGate:
         if price is None or ref is None or ref <= 0:
             reasons.append(f"NO_PRICE: {order.symbol} 기준가/주문가 없음")
             return reasons
-        if abs(price - ref) / ref > L.price_band_pct:
-            reasons.append(f"PRICE_BAND: 주문가 {price} 가 기준가 {ref} 의 ±{L.price_band_pct:.0%} 밖")
+        band = L.price_band_pct if market_of(order.symbol) is Market.KR else L.us_price_band_pct
+        if band is not None and abs(price - ref) / ref > band:
+            reasons.append(f"PRICE_BAND: 주문가 {price} 가 기준가 {ref} 의 ±{band:.0%} 밖")
 
         order_value = price * order.quantity
         equity = account.equity

@@ -1,10 +1,15 @@
-"""핵심 도메인 타입. 금액·가격은 원(KRW) 정수, 수량은 주(株) 정수."""
+"""핵심 도메인 타입. 금액·가격은 원(KRW) 정수, 수량은 주(株) 정수.
+
+미국 주식(D-006)도 내부 금액은 원화 환산 정수로 다루고, 증권사 전송용 현지 통화 가격만
+OrderRequest.native_limit_price 에 따로 담는다.
+"""
 
 from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 
 
@@ -38,13 +43,15 @@ def new_client_order_id(prefix: str = "SK") -> str:
 
 @dataclass(frozen=True)
 class OrderRequest:
-    symbol: str          # 6자리 종목코드, 예: "005930"
+    symbol: str          # 국내 6자리 코드(예: "005930") 또는 미국 티커(예: "AAPL")
     side: Side
     quantity: int
     order_type: OrderType = OrderType.LIMIT
-    limit_price: int | None = None
+    limit_price: int | None = None          # 원(KRW) 환산 가격 — 리스크 관문·장부 기준
     strategy_id: str = "unknown"
     client_order_id: str = field(default_factory=new_client_order_id)
+    native_limit_price: Decimal | None = None  # 현지 통화 가격(미국: USD) — 증권사 전송용
+    exchange: str | None = None                # 미국 거래소 코드(KIS: NASD/NYSE/AMEX)
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:

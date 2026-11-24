@@ -15,7 +15,7 @@ from .engine import BacktestConfig, BacktestEngine
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
-    ap.add_argument("--cash", type=int, default=10_000_000)
+    ap.add_argument("--cash", type=int, default=150_000)  # D-032 모의·실전 테스트 시작 자금
     ap.add_argument("--commission", type=float, required=True)
     ap.add_argument("--sell-tax", type=float, required=True)
     ap.add_argument("--slippage-bps", type=float, required=True)
