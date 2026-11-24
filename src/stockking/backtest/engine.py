@@ -40,11 +40,19 @@ class BacktestResult:
     total_tax: int
     traded_value: int
     warnings: list[str]
+    starting_cash: int | None = None
 
     def summary(self) -> dict:
         eq = [v for _, v in self.equity_curve]
         first, last = self.equity_curve[0][0], self.equity_curve[-1][0]
         rets = metrics.daily_returns(eq)
+        target_baseline = self.starting_cash if self.starting_cash is not None else eq[0]
+        target_returns = metrics.daily_returns([target_baseline, *eq])
+        # Compare equity in whole KRW so an exact 5% gain counts.
+        target_hits = sum(current * 100 >= previous * 105
+                          for previous, current in zip([target_baseline, *eq], eq)
+                          if previous > 0)
+        observed_days = len(target_returns)
         avg_eq = sum(eq) / len(eq)
         years = max((last - first).days / 365.25, 1e-9)
         return {
@@ -54,6 +62,11 @@ class BacktestResult:
             "cagr": metrics.cagr(eq[0], eq[-1], first, last),
             "mdd": metrics.max_drawdown(eq),
             "sharpe": metrics.sharpe(rets),
+            "daily_target_return": 0.05,
+            "daily_observed_days": observed_days,
+            "daily_average_return": sum(target_returns) / observed_days if observed_days else 0.0,
+            "daily_target_hit_days": target_hits,
+            "daily_target_hit_rate": target_hits / observed_days if observed_days else 0.0,
             **metrics.trade_stats(self.realized_pnls),
             "annual_turnover": self.traded_value / avg_eq / years if avg_eq else 0.0,
             "total_commission": self.total_commission,
@@ -160,4 +173,5 @@ class BacktestEngine:
             pending = list(strategy.on_bar_close(ctx))
             prev_day = day
 
-        return BacktestResult(curve, fills, rejected, realized, kills, tot_comm, tot_tax, traded, warnings)
+        return BacktestResult(curve, fills, rejected, realized, kills, tot_comm, tot_tax, traded, warnings,
+                              starting_cash=self.cfg.initial_cash)
