@@ -182,3 +182,50 @@ def test_tech_candidates_price_band():
     t1 = [r["symbol"] for r in rows if r["role"] == "T1"]
     t5 = [r["symbol"] for r in rows if r["role"] == "T5"]
     assert t1 == ["200000", "100000"] and t5 == ["400000"]
+
+
+def test_live_quote_client_is_quote_only(monkeypatch):
+    """D-041: 실전 시세 클라이언트는 허용된 시세 조회 GET과 토큰 발급 외에는 모두 거부."""
+    from stockking_data.live_quotes import KisLiveQuoteClient, QuoteOnlyViolation
+    sent = []
+
+    def transport(method, url, headers, body):
+        sent.append((method, url))
+        if url.endswith("/oauth2/tokenP"):
+            return {"access_token": "tok", "expires_in": 86400}
+        return {"rt_cd": "0", "output": {"stck_prpr": "50000", "iscd_stat_cls_code": "55"}}
+
+    c = KisLiveQuoteClient("k", "s", transport=transport)
+    c.min_interval_sec = 0
+    st = KisQuotes(c).price_status("005930")
+    assert st["price"] == 50000
+    assert all(u.startswith("https://openapi.koreainvestment.com:9443") for _, u in sent)
+    for bad in [("POST", "/uapi/domestic-stock/v1/trading/order-cash", "TTTC0012U"),
+                ("GET", "/uapi/domestic-stock/v1/trading/inquire-balance", "TTTC8434R"),
+                ("POST", "/uapi/domestic-stock/v1/quotations/inquire-price", "FHKST01010100")]:
+        with pytest.raises(QuoteOnlyViolation):
+            c._call(bad[0], bad[1], {"tr_id": bad[2]}, {})
+    with pytest.raises(QuoteOnlyViolation):
+        c._headers("TTTC0012U")
+    assert not [n for n in dir(c) if "order" in n.lower() or "cancel" in n.lower()]
+    n = len(sent)
+    with pytest.raises(QuoteOnlyViolation):
+        c._send("POST", "/uapi/domestic-stock/v1/trading/order-cash", {}, {})
+    assert len(sent) == n  # 거부된 호출은 네트워크로 나가지 않음
+
+
+def test_live_quote_keys_separate_file(tmp_path, monkeypatch):
+    sys.path.insert(0, str(HERE.parents[2] / "src"))
+    from stockking_data import live_quotes
+    import stockking.config as cfg
+    monkeypatch.setenv("KIS_LIVE_QUOTE_APP_KEY", "from-env-should-be-ignored")
+    f = tmp_path / "live.env"
+    f.write_text("KIS_LIVE_QUOTE_APP_KEY=a\nKIS_LIVE_QUOTE_APP_SECRET=b\n")
+    f.chmod(0o600)
+    assert live_quotes.load_live_quote_keys(f) == ("a", "b")
+    monkeypatch.setattr(cfg, "DEFAULT_SECRETS_FILE", f)
+    with pytest.raises(PermissionError):
+        live_quotes.load_live_quote_keys(f)
+    empty = tmp_path / "none.env"
+    with pytest.raises(RuntimeError):
+        live_quotes.load_live_quote_keys(empty)

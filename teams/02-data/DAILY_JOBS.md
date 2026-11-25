@@ -52,6 +52,29 @@ python teams/02-data/collectors/collect.py s02-inputs --kospi200 k200.csv --kosd
 | 국내 분봉 생존편향 | 과거 1년 중 이미 상폐된 종목은 조회 불가 | 오늘 이후 상폐분은 우리 DB에 남음 |
 | 구성종목 | 실행 시점 목록(시점별 이력 아님) | 백테스트용 PIT 이력은 KRX 정기변경 자료로 별도 구축 |
 | 수정주가 | S02 모의 입력은 KIS 수정주가 사용 | 자체 수정계수(af-v1) 구축 후 교체 |
-| 호출 속도 | 모의 도메인 1초 1건(보수적) → 백필 느림 | 실전 앱키로 **시세만** 조회하면 약 10~20배 빨라짐 — 대표 결정 필요 |
+| 호출 속도 | 모의 도메인 1초 1건(보수적) → 백필 느림 | **D-041 승인**: 실전 앱키 시세 전용 클라이언트로 약 14건/초(§5) |
 | NXT(넥스트레이드) | KRX 시세만 적재 | 데이트레이딩 명세 확정 시 추가 |
 | 분봉 `cum_value` | KIS 분봉의 거래대금은 **누적값** | 분당 거래대금은 차분으로 계산 |
+
+## 5. 실전 앱키 시세 전용 백필 (D-041, 2026-11-25 대표 승인)
+
+**조건과 구현**
+| D-041 조건 | 구현 (`collectors/stockking_data/live_quotes.py`) |
+|---|---|
+| 시세 전용 클라이언트에 주문 코드 없음 | 토큰 발급과 허용 목록 5개 시세 조회(GET)만 가능. 주문·잔고 경로는 네트워크로 나가기 전에 거부(테스트로 확인) |
+| 실전 키는 모의 키와 별도 파일 | `%USERPROFILE%\.config\stockking\secrets_live_quotes.env` 에서만 읽음. 환경변수 무시, 모의 `secrets.env`와 같은 파일이면 거부 |
+| 실전 주문 차단 유지 | 프로그램팀 코드(`LIVE_TRADING_APPROVED=False`, `KisPaperClient`) 변경 없음 |
+
+**설정 (실전 앱키 발급 후)**
+1. KIS Developers에서 **실전 계좌용 앱키** 발급 (자동매매 전용 계좌, D-030)
+2. `%USERPROFILE%\.config\stockking\secrets_live_quotes.env` 에 두 줄 저장 (속성 → 보안에서 본인만 읽기):
+   ```
+   KIS_LIVE_QUOTE_APP_KEY=실전앱키
+   KIS_LIVE_QUOTE_APP_SECRET=실전시크릿
+   ```
+3. 확인: `python teams\02-data\collectors\collect.py check --live-quotes`
+4. 백필: `python teams\02-data\collectors\collect.py minute-backfill --days 260 --live-quotes` → 약 260일치를 하룻밤(약 7시간 이내)에 완료 예상 ⚠ 실측 필요
+
+**주의**
+- S02 입력 파일 생성(`s02-inputs`)은 계속 모의 키로 돌립니다(D-041 목적은 분봉 백필).
+- 실전 키 토큰 발급 시 KIS가 알림을 보낼 수 있습니다. 같은 키로 여러 프로그램을 동시에 돌리지 마세요(토큰 발급 1분 1회 제한).

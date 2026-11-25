@@ -30,7 +30,10 @@ from stockking_data import minute_job, s02_inputs  # noqa: E402
 from stockking_data.store import _refuse_inside_git, add_lines, data_root, read_lines  # noqa: E402
 
 
-def _client():
+def _client(live_quotes: bool = False):
+    if live_quotes:  # D-041: 실전 앱키, 시세 조회 전용 (주문 코드 없음, 별도 키 파일)
+        from stockking_data.live_quotes import KisLiveQuoteClient, load_live_quote_keys
+        return KisQuotes(KisLiveQuoteClient(*load_live_quote_keys()))
     from stockking.broker.kis import KisPaperClient, KisPaperCredentials
     return KisQuotes(KisPaperClient(KisPaperCredentials.from_env()))
 
@@ -51,12 +54,16 @@ def _symbols(a, root: Path) -> list[str]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="자료팀 KIS 시세 수집 (조회 전용)")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check", help="인증·시세·지수코드 확인")
+    chk = sub.add_parser("check", help="인증·시세·지수코드 확인")
+    chk.add_argument("--live-quotes", action="store_true", help="D-041 실전 앱키 시세 전용 클라이언트로 확인")
     for name in ("minute", "minute-backfill", "s02-inputs"):
         p = sub.add_parser(name)
         p.add_argument("--kospi200")
         p.add_argument("--kosdaq150")
         p.add_argument("--date", type=date.fromisoformat, default=date.today())
+        if name in ("minute", "minute-backfill"):
+            p.add_argument("--live-quotes", action="store_true",
+                           help="D-041 실전 앱키 시세 전용(약 14건/초). 키 파일 ~/.config/stockking/secrets_live_quotes.env")
         if name == "minute-backfill":
             p.add_argument("--days", type=int, default=260, help="오늘부터 거슬러 올라갈 평일 수")
             p.add_argument("--max-days", type=int, default=None, help="이번 실행에서 채울 최대 일수")
@@ -66,7 +73,7 @@ def main(argv=None) -> int:
             p.add_argument("--extra-symbols", default="", help="보유 종목 등 추가 일봉 대상, 쉼표 구분")
     a = ap.parse_args(argv)
 
-    q = _client()
+    q = _client(getattr(a, "live_quotes", False))
     if a.cmd == "check":
         st = q.price_status("005930")
         name, rows = q.index_bars(s02_inputs.KOSPI200_CODE, date.today().replace(day=1), date.today())
