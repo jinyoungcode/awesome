@@ -126,3 +126,8 @@
 - 비밀값: 윈도우 기본 경로 `%APPDATA%\stockking\secrets.env`, OneDrive 폴더 거부, 메모장 BOM 허용
 - `data/` gitignore (유료·약관 제한 데이터 커밋 방지)
 - ⚠ .ps1 은 개발 환경에 PowerShell 이 없어 미실행 — 대표 PC 첫 실행으로 검증 필요
+
+## 2026-11-25 — D-042 대응 (모의 11/26 시작)
+
+- 리스크실 비중 22.1% 허용오차, 매매팀 I1(실현 순손익에 매수 수수료) 반영 — 335a7d4, 177 passed
+- `WINDOWS_QUICKSTART.md`: 대표 PC 최소 설치(Python·Git·clone·브랜치·venv·pip·pytest·비밀값 파일·첫 연결 점검, 단계별 '정상 화면')와 1일차 기술 점검 시간표 한 장
