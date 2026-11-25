@@ -58,3 +58,25 @@ def test_ceil_to_tick(p, exp):
 
 def test_marketable_sell_limit():
     assert marketable_sell_limit(70_000) == 68_600   # 70,000 × 0.98, 100원 단위
+
+
+def test_x_tech_rejected_outside_paper_even_if_live_approved(monkeypatch):
+    from stockking import config
+    from stockking.audit import Journal
+    from stockking.config import TradingMode
+    from stockking.domain import OrderStatus
+    from stockking.execution import router as router_mod
+
+    class LiveBroker:
+        is_paper = False
+
+        def place_order(self, o):
+            raise AssertionError("실계좌로 전송되면 안 됨")
+
+    monkeypatch.setattr(config, "LIVE_TRADING_APPROVED", True)
+    monkeypatch.setattr(router_mod, "LIVE_TRADING_APPROVED", True)
+    r = router_mod.OrderRouter(LiveBroker(), RiskGate(L), Journal(), TradingMode.LIVE)
+    for o in (OrderRequest("005930", Side.SELL, 1, OrderType.MARKET, exit_reason="X_TECH"),
+              OrderRequest("005930", Side.BUY, 1, OrderType.LIMIT, 70_000, "T_TECH")):
+        res = r.submit(o, snap())
+        assert res.status is OrderStatus.REJECTED_BY_RISK and "TECH_ORDER_PAPER_ONLY" in res.message
