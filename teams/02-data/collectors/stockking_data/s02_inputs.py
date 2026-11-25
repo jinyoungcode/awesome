@@ -28,6 +28,10 @@ MAX_MISSING_250D = 5
 BAR_LOOKBACK_DAYS = 520     # 달력일 → 약 350거래일
 INDEX_LOOKBACK_DAYS = 420   # 달력일 → 약 280거래일
 
+# D-027 점검용 주문 대상 가격대 (teams/04-trading/PAPER_3DAY_CHECK.md §4)
+TECH_RANGES = {"T1": (27_000, 33_000), "T5": (33_000, 37_500)}
+TECH_TOP_N = 5
+
 # KIS iscd_stat_cls_code: 51 관리종목, 52 투자위험, 53 투자경고, 54 투자주의, 58 거래정지, 59 단기과열 ⚠ 재확인
 BLOCK_STATUS = {"51": "관리종목", "52": "투자위험", "53": "투자경고", "54": "투자주의환기", "58": "거래정지", "59": "단기과열"}
 BLOCK_WARN = {"02": "투자경고", "03": "투자위험"}
@@ -139,6 +143,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
             log(f"  일봉 {i}/{len(symbols)} 종목 완료 (API 호출 {q.calls}회)")
 
     universe = sorted(v.symbol for v in verdicts if v.passed)
+    tech = pick_tech_candidates(verdicts)
     write_csv(out / "bars.csv", ["date", "symbol", "open", "high", "low", "close", "volume", "value"],
               sorted(all_bars, key=lambda b: (b["date"], b["symbol"])))
     (out / "universe.txt").write_text("".join(f"{s}\n" for s in universe), encoding="utf-8")
@@ -146,6 +151,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     write_csv(out / "index.csv", ["date", "symbol", "open", "high", "low", "close"], index_rows)
     write_csv(out / "universe_report.csv", ["symbol", "market", "passed", "price", "adv20", "bars", "missing_250", "reasons"],
               [{**v.__dict__, "reasons": "; ".join(v.reasons)} for v in verdicts])
+    write_csv(out / "tech_candidates.csv", ["role", "rank", "symbol", "market", "price", "adv20"], tech)
     manifest = {
         "T": T.isoformat(), "source": "KIS Open API (모의투자 도메인 시세)", "adj": "KIS 수정주가(FID_ORG_ADJ_PRC=0)",
         "constituents": {"KOSPI200": len(kospi200), "KOSDAQ150": len(kosdaq150)},
@@ -153,6 +159,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
         "status_checked": T == date.today(), "api_calls": q.calls,
+        "tech_pick": {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in TECH_RANGES},
         "limitations": [
             "구성종목은 T일 현재 목록(시점별 이력 아님) — 3일 모의 용도로는 충분, 백테스트용 아님",
             "수정주가는 KIS 제공값(자체 수정계수 af-v1 아님, DATA_DICTIONARY §4) — 모의 단계 임시",
@@ -162,3 +169,17 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     }
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
+
+
+def pick_tech_candidates(verdicts: list[Verdict]) -> list[dict]:
+    """D-027 T1/T5 후보: 상태 이상(U6/U7) 없고 T일 일봉이 있는 종목 중 가격대 안, 20일 평균 거래대금 상위 순.
+    U3~U5·U8 탈락은 무관(점검 주문은 전략 유니버스 밖이어도 됨). 1순위를 지정 종목으로 쓴다."""
+    out = []
+    for role, (lo, hi) in TECH_RANGES.items():
+        ok = [v for v in verdicts
+              if lo <= v.price <= hi and v.price > 0
+              and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)]
+        ok.sort(key=lambda v: -v.adv20)
+        out += [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20}
+                for i, v in enumerate(ok[:TECH_TOP_N], 1)]
+    return out

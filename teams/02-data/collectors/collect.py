@@ -27,7 +27,7 @@ sys.path[:0] = [str(HERE), str(REPO / "src")]
 from stockking_data.constituents import read_constituents  # noqa: E402
 from stockking_data.kis_quotes import KisQuotes  # noqa: E402
 from stockking_data import minute_job, s02_inputs  # noqa: E402
-from stockking_data.store import add_lines, data_root, read_lines  # noqa: E402
+from stockking_data.store import _refuse_inside_git, add_lines, data_root, read_lines  # noqa: E402
 
 
 def _client():
@@ -77,6 +77,7 @@ def main(argv=None) -> int:
         if not (a.kospi200 and a.kosdaq150):
             sys.exit("--kospi200, --kosdaq150 구성종목 파일이 필요합니다")
         out = Path(a.out).expanduser()
+        _refuse_inside_git(out)
         m = s02_inputs.build(q, a.date, read_constituents(a.kospi200), read_constituents(a.kosdaq150), out,
                              a.kosdaq150_code, [s.strip().zfill(6) for s in a.extra_symbols.split(",") if s.strip()])
         print(json.dumps(m, ensure_ascii=False, indent=2))

@@ -163,3 +163,16 @@ def test_data_root_refuses_git_repo(monkeypatch):
     monkeypatch.setenv("STOCKKING_DATA_DIR", str(HERE / "var-data"))
     with pytest.raises(RuntimeError):
         store.data_root()
+
+
+def test_tech_candidates_price_band():
+    V = s02_inputs.Verdict
+    a = V("100000", "KOSPI", price=30_000, adv20=9_000_000_000)
+    b = V("200000", "KOSPI", price=31_000, adv20=20_000_000_000)
+    c = V("300000", "KOSDAQ", price=30_500, adv20=50_000_000_000); c.fail("U7 거래정지")
+    d = V("400000", "KOSDAQ", price=35_000, adv20=4_000_000_000); d.fail("U5 20일 평균 거래대금 부족")
+    e = V("500000", "KOSPI", price=40_000, adv20=99_000_000_000)
+    rows = s02_inputs.pick_tech_candidates([a, b, c, d, e])
+    t1 = [r["symbol"] for r in rows if r["role"] == "T1"]
+    t5 = [r["symbol"] for r in rows if r["role"] == "T5"]
+    assert t1 == ["200000", "100000"] and t5 == ["400000"]
