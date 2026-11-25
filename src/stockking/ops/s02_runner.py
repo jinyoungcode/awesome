@@ -241,6 +241,7 @@ def sync_fills(state: dict, records: list[dict], broker_rows: list[dict], day: d
         if s["side"] == "BUY":
             state["cash"] -= dg + dc
             if pos:
+                pos["buy_comm"] = pos.get("buy_comm", 0) + dc   # I1: 실현 순손익에 넣을 매수 수수료
                 new_qty = pos["qty"] + dq
                 pos["entry_price"] = round((pos["entry_price"] * pos["qty"] + dg) / new_qty, 2)
                 pos["qty"] = new_qty
@@ -249,14 +250,18 @@ def sync_fills(state: dict, records: list[dict], broker_rows: list[dict], day: d
                 px = round(dg / dq, 2)
                 state["positions"][s["ticker"]] = {"qty": dq, "entry_price": px, "entry_date": day.isoformat(),
                                                    "init_stop": round(px * (1 - params.stop_pct), 2),  # 체결가 기준(§10)
-                                                   "holding_days": 0, "exception": s.get("exception", "")}
+                                                   "holding_days": 0, "exception": s.get("exception", ""),
+                                                   "buy_comm": dc}
             cum_tax = 0
         else:
             cum_tax = costs.sell_charges(cum_gross, cum_qty)
             dt = cum_tax - prev["tax"]
             state["cash"] += dg - dc - dt
             if pos:
-                state["realized_pnl"] += round(dg - pos["entry_price"] * dq) - dc - dt
+                # I1(매매팀 S02_IMPL_CHECK): 실현 순손익 = 매도대금 − 매수대금 − 매수·매도 수수료 − 매도세
+                buy_comm_alloc = round(pos.get("buy_comm", 0) * min(dq, pos["qty"]) / pos["qty"]) if pos["qty"] else 0
+                pos["buy_comm"] = pos.get("buy_comm", 0) - buy_comm_alloc
+                state["realized_pnl"] += round(dg - pos["entry_price"] * dq) - dc - dt - buy_comm_alloc
                 pos["qty"] -= dq
                 if pos["qty"] <= 0:
                     del state["positions"][s["ticker"]]

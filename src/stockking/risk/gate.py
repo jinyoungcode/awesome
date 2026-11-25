@@ -31,6 +31,8 @@ class RiskLimits:
     max_monthly_loss_pct: float | None = None  # D-028에 월간 한도 없음
     # 1종목 최대 비중(주문 후 기준). D-005: 주문 목표(자산÷5=20%)의 +10%까지 허용하므로 22%.
     max_position_weight: float = 0.22
+    # 리스크관리실(2026-11-25): 수수료로 평가금이 줄어 목표 110%(=22%) 주문이 22.0x%가 되는 경계 → 22.1%까지 허용
+    position_weight_tolerance: float = 0.001
     max_open_positions: int = 5             # 최대 동시 보유 종목 수
     max_order_value: int = 2_000_000        # 1회 주문 최대 금액(원)
     max_orders_per_minute: int = 10         # 폭주 방지(무한루프 주문 차단)
@@ -236,7 +238,7 @@ class RiskGate:
             weight_after = (held_value + order_value) / equity
             # D-025: 1주 예외(신규 진입 1주)는 '1주 가격 ≤ 총자산 30%'가 비중 한도를 대신한다. 그 외 22%(D-005)
             cap = (L.one_share_max_price_pct if order.sizing_exception and order.order_target and not held
-                   else L.max_position_weight)
+                   else L.max_position_weight + L.position_weight_tolerance)
             if weight_after > cap:
                 reasons.append(f"POSITION_WEIGHT: 주문 후 {weight_after:.1%} > {cap:.0%}")
             # 9. 동시 보유 종목 수

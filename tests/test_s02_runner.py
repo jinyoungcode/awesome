@@ -125,14 +125,16 @@ def test_runner_paper_only():
 def test_sell_sync_realizes_pnl_and_marks_exit():
     st = state()
     st["positions"] = {"000200": {"qty": 1, "entry_price": 28_000, "entry_date": "2025-09-01",
-                                  "init_stop": 25_760, "holding_days": 2, "exception": ""}}
-    st["cash"] = 122_000
+                                  "init_stop": 25_760, "holding_days": 2, "exception": "", "buy_comm": 5}}
+    st["cash"] = 122_000 - 5
     recs = [{"event": "s02_submit", "client_order_id": "x", "ticker": "000200", "side": "SELL", "order_type": "MOO",
              "qty": 1, "limit_price": None, "broker_order_id": "0000009", "signal_date": "2025-09-01"}]
     st = R.sync_fills(st, recs, [{"odno": "9", "filled_qty": 1, "avg_price": 29_000.0}], ED, COSTS)
     assert "000200" not in st["positions"] and st["last_exits"]["000200"] == ED.isoformat()
     comm, tax = COSTS.commission(29_000), COSTS.sell_charges(29_000, 1)
-    assert st["realized_pnl"] == 1_000 - comm - tax and st["cash"] == 122_000 + 29_000 - comm - tax
+    # I1: 실현 순손익 = 매도대금 − 매수대금 − 매수·매도 수수료 − 매도세 = 현금 증감과 일치
+    assert st["realized_pnl"] == 1_000 - comm - tax - 5 and st["cash"] == 122_000 - 5 + 29_000 - comm - tax
+    assert st["cash"] - 150_000 == st["realized_pnl"] - (150_000 - 122_000 - 28_000)
 
 
 def test_state_atomic_save(tmp_path):
@@ -221,9 +223,24 @@ def test_partial_fill_then_more_then_same_response():
     assert st["cash"] == cash_before + 32_000 - COSTS.commission(32_000) - COSTS.sell_charges(32_000, 2)
 
 
-def test_boundary_110pct_order_after_fees_hits_22pct_weight():
-    """경계 기록: 목표 110%(33,000원 = 15만 원의 22%) 주문은 앞선 매수 수수료로 평가금이 줄면 비중 22% 초과로 거부된다.
-    (리스크관리실 판단 요청 중 — 정책이 바뀌면 이 테스트를 갱신)"""
-    rows = _buy_rows(2, price=33_000)
+def test_boundary_110pct_orders_pass_with_221_tolerance():
+    """리스크관리실 결정: 비중 22%에 0.1%p 허용오차. 목표 110%(33,000원) 주문이 앞선 수수료로 22.0x%가 돼도 통과,
+    4건 후에는 현금 부족으로 5번째 거부."""
+    rows = _buy_rows(5, price=33_000)
     res = R.submit_plan(rows, state(), FakeKis(), Journal(), {r["ticker"]: 33_000 for r in rows}, mode=TradingMode.PAPER)
-    assert res[0]["status"] == "submitted" and "POSITION_WEIGHT" in res[1]["message"]
+    assert [r["status"] for r in res] == ["submitted"] * 4 + ["rejected_by_risk"]
+    assert "INSUFFICIENT_CASH" in res[-1]["message"]
+
+
+def test_i1_realized_includes_buy_commission_round_trip():
+    recs = [{"event": "s02_submit", "client_order_id": "b", "ticker": "000100", "side": "BUY", "order_type": "LDAY",
+             "qty": 1, "limit_price": "30000", "status": "submitted", "broker_order_id": "0000001",
+             "signal_date": "2025-09-01", "exception": ""},
+            {"event": "s02_submit", "client_order_id": "s", "ticker": "000100", "side": "SELL", "order_type": "MOO",
+             "qty": 1, "limit_price": None, "status": "submitted", "broker_order_id": "0000002",
+             "signal_date": "2025-09-02"}]
+    st = R.sync_fills(state(), recs, [{"odno": "1", "filled_qty": 1, "avg_price": 30_000.0}], SD, COSTS)
+    st = R.sync_fills(st, recs, [{"odno": "1", "filled_qty": 1, "avg_price": 30_000.0},
+                                 {"odno": "2", "filled_qty": 1, "avg_price": 31_000.0}], ED, COSTS)
+    # 왕복 후 현금 변화 = 실현 순손익 (매수·매도 수수료, 매도세 모두 포함)
+    assert st["cash"] - 150_000 == st["realized_pnl"]

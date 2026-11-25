@@ -84,7 +84,7 @@ def test_sell_unaffected():
 def test_weight_cap_30pct_only_for_new_one_share_exception():
     held = {"000100": Position("000100", 1, 42_000)}
     r = reasons(buy(42_000, stop_pct=0.06, exc="ONE_SHARE_OVER"), snap(42_000, positions=held))
-    assert any("POSITION_WEIGHT" in x and "22%" in x for x in r)   # 추가 매수는 예외 비중 적용 안 함
+    assert any("POSITION_WEIGHT" in x for x in r)   # 추가 매수는 예외 비중(30%) 적용 안 함 — 22%(+0.1%p)
 
 
 def test_exception_position_over_30pct_blocks_add_but_no_forced_sell():
