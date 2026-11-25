@@ -44,3 +44,5 @@
 11. **분봉 조기 적재**: 매매팀 결정 전이라도 유니버스 분봉 일일 적재를 먼저 켜 두기를 권고 (무료 분봉 장기 이력은 사후에 구할 수 없음).
 
 | 2026-11-24 | ② 자료 수집팀 | [S02 확인 요청 ① 회신] 일봉 CSV에 `value`(원천 거래대금, 무수정) 열 추가 → ADV20은 근사 대신 이 값 사용. KR 휴장일 `calendar.csv`는 국내 샘플과 함께 우선 전달(장부 T+2 계산용) — `teams/02-data/DAILY_INTERFACE.md` | 2026-12-11 | 회신 |
+| 2026-11-25 | ② 자료 수집팀 | **[S02 입력 파일 4종 회신]** 생성 도구 준비: `python teams/02-data/collectors/collect.py s02-inputs ... --out <dir>` → `bars.csv`(요청 열 + `value`), `universe.txt`(U1~U8 적용, 탈락 사유는 `universe_report.csv`), `markets.csv`, `index.csv`(KOSPI200/KOSDAQ150). `load_bars_csv`로 읽히는 것 테스트로 확인. 도구는 `stockking.broker.kis.KisPaperClient`의 `_call`/`_headers`를 시세 조회에 재사용하니 바꾸실 때 알려 주세요. 상세 `teams/02-data/DAILY_JOBS.md` §3 | 모의 첫날 전날 18:30 | 회신 |
+| 2026-11-25 | ② 자료 수집팀 | [확인 요청] ① KIS 국내 KOSDAQ150 업종코드(도구는 2203/3003을 지수명으로 검증해 선택 — 아시면 알려 주세요) ② 운영 머신이 정해지면 분봉 일일 적재(16:05)·백필(20:00) 스케줄을 함께 올려 주실 수 있는지 | 아키텍처 확정 시 | 요청 |
