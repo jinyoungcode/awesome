@@ -128,7 +128,8 @@ def test_s02_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(s02_inputs, "date", type("D", (date,), {"today": staticmethod(lambda: T)}))
     fc = FakeClient(listing={"111110": T - timedelta(days=100)}, halted={"222220"}, cheap={"333330"})
     q = KisQuotes(fc)
-    m = s02_inputs.build(q, T, ["005930", "111110", "005935"], ["222220", "333330"], tmp_path, log=lambda *_: None)
+    m = s02_inputs.build(q, T, ["005930", "111110", "005935", "444440"], ["222220", "333330"], tmp_path,
+                         log=lambda *_: None, names={"444440": "하나26호스팩"})
     uni = (tmp_path / "universe.txt").read_text().split()
     assert uni == ["005930"]
     rep = {r["symbol"]: r["reasons"] for r in csv.DictReader((tmp_path / "universe_report.csv").open())}
@@ -142,6 +143,9 @@ def test_s02_inputs(tmp_path, monkeypatch):
     mk = {r["symbol"]: r["market"] for r in csv.DictReader((tmp_path / "markets.csv").open())}
     assert mk["005930"] == "KOSPI" and mk["222220"] == "KOSDAQ"
     assert m["index_rows"]["kosdaq150_code"] == "2203"
+    assert "U2" in rep["444440"]
+    ex = m["excluded_by_rule"]
+    assert ex["U2"] == 2 and ex["U3"] == 1 and ex["U4"] == 1 and ex["U7"] >= 1
 
 
 def test_bars_load_with_program_team_loader(tmp_path, monkeypatch):
@@ -157,6 +161,8 @@ def test_constituents_cp949(tmp_path):
     p = tmp_path / "k200.csv"
     p.write_bytes('"종목코드","종목명","종가"\n"005930","삼성전자","50000"\n"660","SK하이닉스","1"\n'.encode("cp949"))
     assert read_constituents(p) == ["000660", "005930"]
+    from stockking_data.constituents import read_constituent_names
+    assert read_constituent_names(p)["005930"] == "삼성전자"
 
 
 def test_data_root_refuses_git_repo(monkeypatch):

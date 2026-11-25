@@ -25,24 +25,30 @@ def _decode(raw: bytes) -> str:
 
 
 def read_constituents(path: str | Path) -> list[str]:
+    return sorted(read_constituent_names(path))
+
+
+def read_constituent_names(path: str | Path) -> dict[str, str]:
+    """{종목코드: 종목명}. 종목명 열이 없으면 빈 문자열."""
     text = _decode(Path(path).read_bytes())
     rows = list(csv.reader(io.StringIO(text)))
     if not rows:
         raise ValueError(f"빈 파일: {path}")
     header, body = rows[0], rows[1:]
-    col = None
+    col = name_col = None
     for i, h in enumerate(header):
-        if "종목코드" in h or h.strip().lower() in ("code", "symbol", "isu_srt_cd"):
+        if col is None and ("종목코드" in h or h.strip().lower() in ("code", "symbol", "isu_srt_cd")):
             col = i
-            break
+        if name_col is None and ("종목명" in h or h.strip().lower() in ("name", "isu_abbrv")):
+            name_col = i
     if col is None:  # 헤더 없는 단순 목록
         body, col = rows, 0
-    codes = []
+    out: dict[str, str] = {}
     for r in body:
         if len(r) > col:
             c = r[col].strip().strip('"').zfill(6)
             if _CODE.match(c):
-                codes.append(c)
-    if not codes:
+                out[c] = r[name_col].strip() if name_col is not None and len(r) > name_col else ""
+    if not out:
         raise ValueError(f"종목코드를 찾지 못했습니다: {path}")
-    return sorted(set(codes))
+    return out

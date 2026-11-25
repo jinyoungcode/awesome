@@ -53,7 +53,7 @@ teams\02-data\collectors\run_daily.bat
 | `universe.txt` | `--universe` | 종목코드 수십~수백 줄 |
 | `markets.csv` | `--markets` | `symbol,market` |
 | `index.csv` | `--index` | KOSPI200·KOSDAQ150 각 200행 이상 |
-| `manifest.json` | — | `universe_passed` > 0, `bad_ohlc_count` = 0, `index_rows` 각 200 이상, `status_checked` = true |
+| `manifest.json` | — | `universe_passed` > 0, `bad_ohlc_count` = 0, `index_rows` 각 200 이상, `status_checked` = true, `excluded_by_rule`(제외 사유별 건수) |
 | `universe_report.csv` | — | 종목별 탈락 사유 (엑셀로 열기) |
 | `tech_candidates.csv` | — | D-027 T1/T5 후보 (§5) |
 
@@ -63,13 +63,31 @@ set D=%USERPROFILE%\stockking-data\s02_inputs\YYYY-MM-DD
 python -m stockking.ops.s02_runner plan --bars %D%\bars.csv --universe %D%\universe.txt --markets %D%\markets.csv --index %D%\index.csv
 ```
 
+### `universe.txt`에 적용되는 필터 (COMMON_SPEC §3 U1~U8, 매매팀 S02_IMPL_CHECK I2 회신)
+
+| 규칙 | 적용 방법 |
+|---|---|
+| U1 KOSPI200·KOSDAQ150 | 구성종목 파일 2개 |
+| U2 보통주(우선주·SPAC·리츠 제외) | 종목코드 끝자리 0 + 종목명에 `스팩`·`리츠`·`우`(끝) 등 포함 시 제외 |
+| U3 상장 250거래일 이상 | 최근 일봉 수 (약 350거래일 조회) |
+| U4 주가 ≥ 2,000원 | T일 현재가(=종가, 원주가) |
+| U5 ADV20 ≥ 30억 | **실제 거래대금**(KIS `acml_tr_pbmn`) 20일 평균 — 종가×거래량 근사 아님 |
+| U6 관리·투자주의환기·경고·위험·단기과열·정리매매 아님 | KIS 현재가 조회의 종목상태·시장경고·정리매매·단기과열 표시 (T일 장 마감 후 실행 기준) |
+| U7 거래정지 아님 | KIS 임시정지 표시 / 종목상태 58. *T+1 정지 예정 공시는 미반영* |
+| U8 최근 250일 결측 ≤ 5일 | KOSPI200 지수 거래일을 기준 달력으로 대조 |
+
+제외 사유별 건수는 `manifest.json`의 `excluded_by_rule`, 종목별 사유는 `universe_report.csv`.
+
 ## 5. D-027 점검용 주문 T1 대상 종목 지정
 
 - **지정 규칙 (자료팀):** 12/2(화) 실행 결과의 `tech_candidates.csv`에서 **role=T1, rank=1** 종목을 T1 대상으로 지정합니다. `manifest.json`의 `tech_pick.T1`에도 같은 값이 나옵니다.
   - 조건: KOSPI200·KOSDAQ150 구성종목 중 12/2 종가 **27,000~33,000원**, 관리·경고·위험·정지·단기과열·정리매매 아님, **20일 평균 거래대금 1위**
   - rank 1이 3일차 아침에 거래정지 등으로 불가하면 rank 2를 씁니다.
 - **지금 특정 종목을 미리 못 박지 않는 이유:** 가격대 조건(정수 3만 원 범위)이라 주가가 며칠 사이 벗어날 수 있습니다. 전날 저녁 종가로 고르는 것이 매매팀 명세("자료팀이 전날 저녁 지정")와도 맞습니다.
-- 참고로 T5(1주 예외, 33,000~37,500원) 후보도 같은 파일에 `role=T5`로 나옵니다. T5는 프로그램팀 구현 후 사용합니다.
+- **T2**는 T1 보유분 매도이므로 같은 종목입니다(`role=T1` 목록 = T1·T2 후보).
+- **T5**(1주 예외, 33,000~37,500원) 후보는 같은 파일에 `role=T5`로 각 5종목까지 나옵니다.
+- **T4(미국)**는 D-033(T0 국내만)에 따라 이번 범위 밖입니다.
+- 매매팀 요청(12/2 17:30까지 후보 목록): 12/2 16:00 실행 결과의 `tech_candidates.csv`가 그 목록입니다. 실행 후 대표가 이 파일 내용(종목코드·가격)을 매매팀 창에 전달해 주시면 됩니다(시세 값이라 저장소 커밋 대신 전달).
 - ETF는 후보에 넣지 않았습니다(종목 조건으로 충분히 나옴). 후보가 0개면 자료팀에 알려 주세요. KODEX 200(069500) 등 ETF로 대체 지정하겠습니다.
 
 ## 6. 불가능하거나 위험한 항목 (총괄 보고)

@@ -68,8 +68,14 @@ def resolve_kosdaq150(q, start: date, end: date, override: str | None) -> tuple[
     raise RuntimeError("KOSDAQ150 지수 코드를 찾지 못했습니다. KIS 업종코드표 확인 후 --kosdaq150-code 로 지정하세요")
 
 
-def judge(symbol: str, market: str, bars: list[dict], status: dict | None, T: date, calendar: list[str]) -> Verdict:
+NON_COMMON_NAME_MARKERS = ("스팩", "SPAC", "리츠", "REIT", "우B", "우C")
+
+
+def judge(symbol: str, market: str, bars: list[dict], status: dict | None, T: date, calendar: list[str],
+          name: str = "") -> Verdict:
     v = Verdict(symbol, market)
+    if any(m in name for m in NON_COMMON_NAME_MARKERS) or name.endswith("우"):
+        v.fail(f"U2 보통주 아님(종목명 '{name}')")
     v.bars = len(bars)
     by_date = {b["date"]: b for b in bars}
     t = T.isoformat()
@@ -110,7 +116,9 @@ def judge(symbol: str, market: str, bars: list[dict], status: dict | None, T: da
 
 
 def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
-          kosdaq150_code: str | None = None, extra_symbols: list[str] | None = None, log=print) -> dict:
+          kosdaq150_code: str | None = None, extra_symbols: list[str] | None = None, log=print,
+          names: dict[str, str] | None = None) -> dict:
+    names = names or {}
     out.mkdir(parents=True, exist_ok=True)
     istart = T - timedelta(days=INDEX_LOOKBACK_DAYS)
     k2_name, k2 = q.index_bars(KOSPI200_CODE, istart, T)
@@ -138,7 +146,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         except Exception:  # noqa: BLE001
             st = None
         if s in markets:
-            verdicts.append(judge(s, markets[s], good, st, T, calendar))
+            verdicts.append(judge(s, markets[s], good, st, T, calendar, names.get(s, "")))
         if i % 25 == 0:
             log(f"  일봉 {i}/{len(symbols)} 종목 완료 (API 호출 {q.calls}회)")
 
@@ -156,6 +164,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "T": T.isoformat(), "source": "KIS Open API (모의투자 도메인 시세)", "adj": "KIS 수정주가(FID_ORG_ADJ_PRC=0)",
         "constituents": {"KOSPI200": len(kospi200), "KOSDAQ150": len(kosdaq150)},
         "universe_passed": len(universe), "bars_rows": len(all_bars),
+        "excluded_by_rule": exclusion_counts(verdicts),
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
         "status_checked": T == date.today(), "api_calls": q.calls,
@@ -183,3 +192,13 @@ def pick_tech_candidates(verdicts: list[Verdict]) -> list[dict]:
         out += [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20}
                 for i, v in enumerate(ok[:TECH_TOP_N], 1)]
     return out
+
+
+def exclusion_counts(verdicts: list[Verdict]) -> dict[str, int]:
+    """제외 사유별 건수 (한 종목이 여러 사유면 각각 집계). 매매팀 S02_IMPL_CHECK I2 요청."""
+    counts: dict[str, int] = {}
+    for v in verdicts:
+        for r in v.reasons:
+            key = r.split(" ")[0] if r.startswith("U") else r
+            counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))

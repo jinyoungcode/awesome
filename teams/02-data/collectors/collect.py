@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path[:0] = [str(HERE), str(REPO / "src")]
 
-from stockking_data.constituents import read_constituents  # noqa: E402
+from stockking_data.constituents import read_constituent_names, read_constituents  # noqa: E402
 from stockking_data.kis_quotes import KisQuotes  # noqa: E402
 from stockking_data import minute_job, s02_inputs  # noqa: E402
 from stockking_data.store import _refuse_inside_git, add_lines, data_root, read_lines  # noqa: E402
@@ -78,8 +78,10 @@ def main(argv=None) -> int:
             sys.exit("--kospi200, --kosdaq150 구성종목 파일이 필요합니다")
         out = Path(a.out).expanduser()
         _refuse_inside_git(out)
-        m = s02_inputs.build(q, a.date, read_constituents(a.kospi200), read_constituents(a.kosdaq150), out,
-                             a.kosdaq150_code, [s.strip().zfill(6) for s in a.extra_symbols.split(",") if s.strip()])
+        k2, kq = read_constituent_names(a.kospi200), read_constituent_names(a.kosdaq150)
+        m = s02_inputs.build(q, a.date, sorted(k2), sorted(kq), out,
+                             a.kosdaq150_code, [s.strip().zfill(6) for s in a.extra_symbols.split(",") if s.strip()],
+                             names=k2 | kq)
         print(json.dumps(m, ensure_ascii=False, indent=2))
         return 0
 
