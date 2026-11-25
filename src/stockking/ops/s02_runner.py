@@ -117,20 +117,54 @@ def runner_limits():
     return replace(limits_for(resolve_stage()), require_stop_for_buy=True, allow_market_orders=True)
 
 
+def _reserve_cost(price: int, qty: int) -> int:
+    from .ledger_close import PAPER_COSTS
+    gross = price * qty
+    return gross + PAPER_COSTS.commission(gross)
+
+
+def open_buy_orders(records: list[dict], state: dict) -> list[dict]:
+    """접수됐지만 아직 전량 체결·취소되지 않은 S02 매수 (재시작 후 예약 반영용)."""
+    canceled = {r["client_order_id"] for r in records if r.get("event") == "s02_cancel" and r.get("accepted")}
+    applied = state.get("applied", {})
+    return [s for s in submitted(records)
+            if s["side"] == "BUY" and s["status"] == "submitted" and s["client_order_id"] not in canceled
+            and applied.get(s["client_order_id"], {}).get("qty", 0) < s["qty"]]
+
+
 def submit_plan(rows: list[dict], state: dict, kis, journal: Journal, prices: dict[str, int],
-                mode: TradingMode | None = None) -> list[dict]:
+                mode: TradingMode | None = None, records: list[dict] | None = None) -> list[dict]:
+    """주문계획 제출. 앞서 접수된(이번 루프 + 재시작 전) 미체결 매수의 현금·종목 슬롯을 예약 반영한 뒤
+    다음 주문을 관문에 넣는다 (Codex 검토 #1). 같은 신호일·종목·방향으로 이미 접수된 행은 다시 내지 않는다."""
     assert_paper_only(mode or config.resolve_mode(), kis)
+    records = records or []
     router = OrderRouter(kis, RiskGate(runner_limits(), kill_switch=KillSwitch()), journal, TradingMode.PAPER)
     cap = state["starting_cash"]
+    cash = state["cash"]
     positions = {s: Position(s, p["qty"], p["entry_price"]) for s, p in state["positions"].items()}
-    over = frozenset(s for s, p in state["positions"].items() if p.get("exception") == ONE_SHARE_OVER)
+    over = {s for s, p in state["positions"].items() if p.get("exception") == ONE_SHARE_OVER}
+    applied = state.get("applied", {})
+
+    def reserve(ticker: str, qty: int, price: int, exception: str) -> None:
+        nonlocal cash
+        cash -= _reserve_cost(price, qty)
+        held = positions.get(ticker)
+        positions[ticker] = Position(ticker, (held.quantity if held else 0) + qty, price)
+        if exception == ONE_SHARE_OVER:
+            over.add(ticker)
+
+    for o in open_buy_orders(records, state):   # 재시작 전 미체결 매수
+        remaining = o["qty"] - applied.get(o["client_order_id"], {}).get("qty", 0)
+        reserve(o["ticker"], remaining, int(o["limit_price"]), o.get("exception", ""))
+    done_keys = {(s["signal_date"], s["ticker"], s["side"]) for s in submitted(records) if s["status"] == "submitted"}
+
     equity = book_equity(state, prices)
     sod = state.get("start_of_day_equity", equity)
-    snap = AccountSnapshot(state["cash"], positions, prices, sod, principal=cap, peak_equity=state.get("peak_equity"),
-                           over_exception_symbols=over)
     target = order_target(state["starting_cash"], state["realized_pnl"])
     results = []
     for r in sorted(rows, key=lambda x: x["side"] != "SELL"):   # 청산 먼저 (§6)
+        if (r["signal_date"], r["ticker"], r["side"]) in done_keys:
+            continue   # 재시작 후 같은 계획 재실행 — 중복 제출 방지
         if r["side"] == "SELL":
             if kr_sell_mode() == "market":
                 o = OrderRequest(r["ticker"], Side.SELL, int(r["qty"]), OrderType.MARKET, None, STRATEGY_ID,
@@ -142,7 +176,11 @@ def submit_plan(rows: list[dict], state: dict, kis, journal: Journal, prices: di
             o = OrderRequest(r["ticker"], Side.BUY, int(r["qty"]), OrderType.LIMIT, int(r["limit_price"]),
                              STRATEGY_ID, stop_price=float(r["init_stop"]), order_target=target,
                              sizing_exception=r.get("exception", ""))
+        snap = AccountSnapshot(cash, dict(positions), prices, sod, principal=cap,
+                               peak_equity=state.get("peak_equity"), over_exception_symbols=frozenset(over))
         routed = router.submit(o, snap, reference_price=prices.get(r["ticker"]))
+        if routed.status is OrderStatus.SUBMITTED and r["side"] == "BUY":
+            reserve(r["ticker"], int(r["qty"]), int(r["limit_price"]), r.get("exception", ""))
         org = ((getattr(kis, "last_response", {}) or {}).get("output") or {}).get("KRX_FWDG_ORD_ORGNO", "")
         rec = {"client_order_id": o.client_order_id, "ticker": r["ticker"], "side": r["side"],
                "order_type": r["order_type"], "qty": int(r["qty"]), "limit_price": r.get("limit_price") or None,
@@ -179,37 +217,51 @@ def cancel_open_entries(records: list[dict], kis, journal: Journal, day: str, no
 
 def sync_fills(state: dict, records: list[dict], broker_rows: list[dict], day: date, costs,
                params: S02Params = S02Params()) -> dict:
-    """당일 체결 → 가상 장부 반영. 보유일수 +1 은 기존 보유분에만(진입일 = 0)."""
+    """당일 체결 → 가상 장부 반영. 주문별 '누적 체결 − 이미 반영한 양'만 반영한다(부분체결·재조회 안전, Codex 검토 #2).
+    보유일수 +1 은 하루 한 번, 기존 보유분에만(진입일 = 0)."""
     by_odno = {r["odno"].lstrip("0"): r for r in broker_rows}
-    done = set(state.setdefault("synced_orders", []))
-    if state.get("last_sync_date") != day.isoformat():   # 같은 날 두 번 실행해도 보유일수는 한 번만 증가
+    applied = state.setdefault("applied", {})   # client_order_id -> {qty, gross, comm, tax}
+    if state.get("last_sync_date") != day.isoformat():
         for p in state["positions"].values():
             p["holding_days"] += 1
         state["last_sync_date"] = day.isoformat()
     for s in submitted(records):
         b = by_odno.get((s.get("broker_order_id") or "").lstrip("0"))
-        if not b or b["filled_qty"] <= 0 or s["client_order_id"] in done:
+        if not b:
             continue
-        qty, px = int(b["filled_qty"]), int(round(b["avg_price"]))
-        gross = qty * px
-        comm = costs.commission(gross)
+        cum_qty = int(b["filled_qty"])
+        cum_gross = int(round(b["avg_price"] * cum_qty))
+        prev = applied.get(s["client_order_id"], {"qty": 0, "gross": 0, "comm": 0, "tax": 0})
+        dq, dg = cum_qty - prev["qty"], cum_gross - prev["gross"]
+        if dq <= 0:
+            continue
+        cum_comm = costs.commission(cum_gross)
+        dc = cum_comm - prev["comm"]
+        pos = state["positions"].get(s["ticker"])
         if s["side"] == "BUY":
-            state["cash"] -= gross + comm
-            state["positions"][s["ticker"]] = {"qty": qty, "entry_price": px, "entry_date": day.isoformat(),
-                                               "init_stop": round(px * (1 - params.stop_pct), 2),  # 체결가 기준 재계산(§10)
-                                               "holding_days": 0, "exception": s.get("exception", "")}
-        else:
-            pos = state["positions"].get(s["ticker"])
-            tax = costs.sell_charges(gross, qty)
-            state["cash"] += gross - comm - tax
+            state["cash"] -= dg + dc
             if pos:
-                state["realized_pnl"] += (px - pos["entry_price"]) * qty - comm - tax
-                pos["qty"] -= qty
+                new_qty = pos["qty"] + dq
+                pos["entry_price"] = round((pos["entry_price"] * pos["qty"] + dg) / new_qty, 2)
+                pos["qty"] = new_qty
+                pos["init_stop"] = round(pos["entry_price"] * (1 - params.stop_pct), 2)
+            else:
+                px = round(dg / dq, 2)
+                state["positions"][s["ticker"]] = {"qty": dq, "entry_price": px, "entry_date": day.isoformat(),
+                                                   "init_stop": round(px * (1 - params.stop_pct), 2),  # 체결가 기준(§10)
+                                                   "holding_days": 0, "exception": s.get("exception", "")}
+            cum_tax = 0
+        else:
+            cum_tax = costs.sell_charges(cum_gross, cum_qty)
+            dt = cum_tax - prev["tax"]
+            state["cash"] += dg - dc - dt
+            if pos:
+                state["realized_pnl"] += round(dg - pos["entry_price"] * dq) - dc - dt
+                pos["qty"] -= dq
                 if pos["qty"] <= 0:
                     del state["positions"][s["ticker"]]
                     state["last_exits"][s["ticker"]] = day.isoformat()
-        done.add(s["client_order_id"])
-    state["synced_orders"] = sorted(done)
+        applied[s["client_order_id"]] = {"qty": cum_qty, "gross": cum_gross, "comm": cum_comm, "tax": cum_tax}
     return state
 
 
@@ -279,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = read_plan(plan_path) if plan_path.exists() else []
         prices = {r["ticker"]: kis.inquire_price(r["ticker"])["base_price"] for r in rows}
         state["start_of_day_equity"] = book_equity(state, prices)
-        res = submit_plan(rows, state, kis, journal, prices)
+        res = submit_plan(rows, state, kis, journal, prices, records=load_records())
         save_state(state)
         for r in res:
             print(f"  {r['side']} {r['ticker']} {r['qty']}주 → {r['status']} {r['message']}")
@@ -293,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         records = load_records()
         state = sync_fills(state, records, kis.inquire_daily_orders(datetime.now().strftime("%Y%m%d")),
                            date.today(), PAPER_COSTS)
-        journal.write("s02_sync", synced=state["synced_orders"], cash=state["cash"], positions=state["positions"])
+        journal.write("s02_sync", applied=state["applied"], cash=state["cash"], positions=state["positions"])
         state["peak_equity"] = max(state.get("peak_equity", 0), state["cash"] + sum(
             p["qty"] * p["entry_price"] for p in state["positions"].values()))
         save_state(state)

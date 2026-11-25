@@ -159,3 +159,71 @@ def test_runner_sell_modes(monkeypatch):
     k2 = FakeKis()
     R.submit_plan(row, st, k2, Journal(), {"000200": 28_500}, mode=TradingMode.PAPER)
     assert k2.sent[0].order_type.value == "limit" and k2.sent[0].limit_price == 27_950
+
+
+# ---------- Codex 검토 #1: 미체결 매수의 현금·슬롯 예약 ----------
+def _buy_rows(n, price=32_000, start=0):
+    return [{"signal_date": "2025-09-01", "ticker": f"00{start + i + 1:04d}", "side": "BUY", "order_type": "LDAY",
+             "qty": "1", "limit_price": str(price), "init_stop": str(price * 0.92), "reason_code": "E_S02_PB",
+             "exception": ""} for i in range(n)]
+
+
+def test_multiple_buys_reserve_cash_in_same_run():
+    rows, kis, j = _buy_rows(5), FakeKis(), Journal()
+    prices = {r["ticker"]: 32_000 for r in rows}
+    res = R.submit_plan(rows, state(), kis, j, prices, mode=TradingMode.PAPER)
+    # 32,000원(+수수료 5원) × 4건 = 128,020원 예약 → 5번째는 남은 현금 21,980원으로 부족
+    assert [r["status"] for r in res] == ["submitted"] * 4 + ["rejected_by_risk"]
+    assert "INSUFFICIENT_CASH" in res[-1]["message"] and len(kis.sent) == 4
+
+
+def test_restart_reserves_existing_open_orders_and_skips_resubmit():
+    rows, j = _buy_rows(4), Journal()
+    prices = {f"00{i:04d}": 32_000 for i in range(1, 7)}
+    R.submit_plan(rows, state(), FakeKis(), j, prices, mode=TradingMode.PAPER)
+    # 재시작: 같은 계획 + 새 행 1건. 기존 4건은 재제출하지 않고, 미체결로 예약된 현금 때문에 새 행은 거부
+    kis2 = FakeKis()
+    res = R.submit_plan(rows + _buy_rows(1, start=5), state(), kis2, j, prices, mode=TradingMode.PAPER,
+                        records=j.records)
+    assert [r["ticker"] for r in res] == ["000006"] and res[0]["status"] == "rejected_by_risk"
+    assert not kis2.sent
+    # 기존 미체결이 취소되면 예약이 풀려 같은 새 행이 통과
+    for s in R.submitted(j.records):
+        j.write("s02_cancel", client_order_id=s["client_order_id"], accepted=True)
+    res2 = R.submit_plan(_buy_rows(1, start=5), state(), FakeKis(), Journal(), prices, mode=TradingMode.PAPER,
+                         records=j.records)
+    assert res2[0]["status"] == "submitted"
+
+
+# ---------- Codex 검토 #2: 부분체결 누적 반영 ----------
+def test_partial_fill_then_more_then_same_response():
+    recs = [{"event": "s02_submit", "client_order_id": "c1", "ticker": "000100", "side": "BUY", "order_type": "LDAY",
+             "qty": 2, "limit_price": "15100", "status": "submitted", "broker_order_id": "0000001",
+             "signal_date": "2025-09-01", "exception": ""}]
+    st = state()
+    st = R.sync_fills(st, recs, [{"odno": "1", "filled_qty": 1, "avg_price": 15_000.0}], ED, COSTS)
+    assert st["positions"]["000100"]["qty"] == 1 and st["cash"] == 150_000 - 15_000 - COSTS.commission(15_000)
+    second = [{"odno": "1", "filled_qty": 2, "avg_price": 15_050.0}]      # 두 번째 1주 15,100원
+    st = R.sync_fills(st, recs, second, ED, COSTS)
+    st = R.sync_fills(st, recs, second, ED, COSTS)                         # 같은 응답 재조회 → 변화 없음
+    pos = st["positions"]["000100"]
+    assert pos["qty"] == 2 and pos["entry_price"] == 15_050
+    assert st["cash"] == 150_000 - 30_100 - COSTS.commission(30_100)
+    assert st["applied"]["c1"]["qty"] == 2
+    # 부분 매도 → 추가 매도도 같은 방식
+    recs.append({"event": "s02_submit", "client_order_id": "c2", "ticker": "000100", "side": "SELL",
+                 "order_type": "MOO", "qty": 2, "limit_price": None, "status": "submitted",
+                 "broker_order_id": "0000002", "signal_date": "2025-09-02"})
+    cash_before = st["cash"]
+    st = R.sync_fills(st, recs, second + [{"odno": "2", "filled_qty": 1, "avg_price": 16_000.0}], ED, COSTS)
+    st = R.sync_fills(st, recs, second + [{"odno": "2", "filled_qty": 2, "avg_price": 16_000.0}], ED, COSTS)
+    assert "000100" not in st["positions"]
+    assert st["cash"] == cash_before + 32_000 - COSTS.commission(32_000) - COSTS.sell_charges(32_000, 2)
+
+
+def test_boundary_110pct_order_after_fees_hits_22pct_weight():
+    """경계 기록: 목표 110%(33,000원 = 15만 원의 22%) 주문은 앞선 매수 수수료로 평가금이 줄면 비중 22% 초과로 거부된다.
+    (리스크관리실 판단 요청 중 — 정책이 바뀌면 이 테스트를 갱신)"""
+    rows = _buy_rows(2, price=33_000)
+    res = R.submit_plan(rows, state(), FakeKis(), Journal(), {r["ticker"]: 33_000 for r in rows}, mode=TradingMode.PAPER)
+    assert res[0]["status"] == "submitted" and "POSITION_WEIGHT" in res[1]["message"]
