@@ -60,7 +60,14 @@ class Secret:
     __str__ = __repr__
 
 
-DEFAULT_SECRETS_FILE = Path.home() / ".config" / "stockking" / "secrets.env"
+def default_secrets_file(is_windows: bool | None = None) -> Path:
+    """윈도우: %APPDATA%\\stockking\\secrets.env / 그 외: ~/.config/stockking/secrets.env"""
+    if (os.name == "nt" if is_windows is None else is_windows) and os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"]) / "stockking" / "secrets.env"
+    return Path.home() / ".config" / "stockking" / "secrets.env"
+
+
+DEFAULT_SECRETS_FILE = default_secrets_file()
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -74,17 +81,23 @@ def load_secret_file(path: str | Path | None = None) -> dict[str, str]:
     안전 규칙 (위반 시 InsecureSecretFile):
     - 파일이 저장소 폴더 안에 있으면 거부 (실수로 커밋되는 사고 방지)
     - POSIX 에서 그룹/기타 사용자에게 읽기 권한이 있으면 거부 (chmod 600 필요)
+    - OneDrive 등 클라우드 동기화 폴더 안이면 거부 (윈도우: 키가 클라우드로 복제되는 사고 방지)
+    - 윈도우 권한(ACL)은 scripts/setup_windows.ps1 이 본인만 읽기로 설정
     파일이 없으면 빈 dict.
     """
     p = Path(path or os.environ.get("STOCKKING_SECRETS_FILE") or DEFAULT_SECRETS_FILE).expanduser().resolve()
     if not p.exists():
         return {}
+    for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        od = os.environ.get(var)
+        if od and (p == Path(od).resolve() or Path(od).resolve() in p.parents):
+            raise InsecureSecretFile(f"비밀값 파일이 OneDrive 동기화 폴더 안에 있습니다: {p} — %APPDATA%\\stockking 로 옮기세요")
     if p == _REPO_ROOT or _REPO_ROOT in p.parents:
         raise InsecureSecretFile(f"비밀값 파일은 저장소 밖에 두어야 합니다: {p}")
     if os.name == "posix" and p.stat().st_mode & 0o077:
         raise InsecureSecretFile(f"비밀값 파일 권한이 너무 넓습니다. 'chmod 600 {p}' 후 다시 실행하세요")
     values: dict[str, str] = {}
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for line in p.read_text(encoding="utf-8-sig").splitlines():  # 메모장 BOM 허용
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -98,7 +111,7 @@ def require_secret(name: str, secret_file: str | Path | None = None) -> Secret:
     value = os.environ.get(name, "") or load_secret_file(secret_file).get(name, "")
     if not value:
         raise RuntimeError(
-            f"비밀값 {name} 이(가) 없습니다. 환경변수 또는 {DEFAULT_SECRETS_FILE} (chmod 600) 에 넣으세요. "
+            f"비밀값 {name} 이(가) 없습니다. 환경변수 또는 {default_secrets_file()} 에 넣으세요. "
             "teams/03-dev/SECRETS.md 참고"
         )
     return Secret(value)

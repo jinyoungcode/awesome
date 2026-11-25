@@ -192,3 +192,20 @@ def test_kis_daily_orders_parsing():
     assert {k: r[k] for k in ("odno", "symbol", "side", "ord_qty", "filled_qty", "avg_price", "canceled")} == {
         "odno": "0000123", "symbol": "005930", "side": "buy", "ord_qty": 1, "filled_qty": 0, "avg_price": 0.0,
         "canceled": True}
+
+
+def test_secret_file_rejects_onedrive(tmp_path, monkeypatch):
+    od = tmp_path / "OneDrive"
+    (od / "stockking").mkdir(parents=True)
+    f = od / "stockking" / "secrets.env"
+    f.write_text("K=v\n")
+    f.chmod(0o600)
+    monkeypatch.setenv("OneDrive", str(od))
+    with pytest.raises(InsecureSecretFile, match="OneDrive"):
+        load_secret_file(f)
+
+
+def test_windows_default_secret_path(monkeypatch):
+    monkeypatch.setenv("APPDATA", "/fake/AppData/Roaming")
+    assert config.default_secrets_file(is_windows=True) == Path("/fake/AppData/Roaming/stockking/secrets.env")
+    assert config.default_secrets_file(is_windows=False).parts[-3:] == (".config", "stockking", "secrets.env")

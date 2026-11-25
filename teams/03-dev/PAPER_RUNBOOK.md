@@ -5,7 +5,29 @@
 > **운용 기준 자금 15만 원(D-031·D-032, 예비금 없음)**: 주문 목표 3만 원(= 15만 ÷ 5), 1주 예외 가격 상한 4.5만 원, 최종 손절 손실 3만 원(−20%). 설정값 `STOCKKING_OPERATING_CAPITAL=150000`(기본).
 > 손실 한도는 자금 단계 설정을 따릅니다: `STOCKKING_CAPITAL_STAGE=paper`(기본, T0 값 적용: 일 −5%, 주 −8%, 원금 −20% 최종 손절 — D-028).
 
-## 0. 준비 (D-1, 한 번만)
+## 윈도우 PC (대표 PC) — 이 표대로만 하면 됩니다
+
+> 일정(총괄안): PC 준비·오프라인 훈련 11/28(금)까지 → 3일 모의 12/1(월)~12/3(수)
+> PowerShell 은 **저장소 폴더**에서 엽니다(탐색기에서 폴더 열고 주소창에 `powershell` 입력). 저장소는 OneDrive 밖(예: `C:\stockking`)에 두세요.
+
+| 언제 | 명령 (PowerShell) |
+|---|---|
+| 처음 한 번 | `powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1` |
+| 키 넣기 | `notepad "$env:APPDATA\stockking\secrets.env"` → 4줄 채우고 저장 (`SECRETS.md` §3) |
+| 키 넣은 뒤 | `powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step check` (주문 없음) |
+| 매 거래일 08:25 | `… scripts\paper_day.ps1 -Step open` — 장부 시작점·시작 전 점검·연결 점검·전날 주문계획 제출 |
+| 1일차 장중 | `… scripts\paper_day.ps1 -Step drill` — 킬스위치 훈련·1주 주문/취소·재시작 훈련 |
+| 매 거래일 15:15 | `… scripts\paper_day.ps1 -Step cancel` |
+| 매 거래일 15:45 | `… scripts\paper_day.ps1 -Step close` — 체결 반영·장부 대사(C1)·주문 대사(C3)·신호 일치(C2)·점검표 |
+| 매 거래일 18:30 | `… scripts\paper_day.ps1 -Step plan` — 자료팀 파일 `data\YYYYMMDD\{bars.csv, universe.txt, markets.csv, index.csv}` 필요 |
+| 비상 중단 | `New-Item var\KILL_SWITCH -ItemType File` (해제는 원인 확인 후 `Remove-Item var\KILL_SWITCH`) |
+
+- `…` = `powershell -ExecutionPolicy Bypass -File`. 키를 파일에 두지 않으려면 끝에 `-PromptKeys`.
+- 각 단계 기록은 `var\logs\paper_day_날짜_단계.log`. 실패하면 화면 마지막에 '확인 필요' 목록이 나오고, `open` 은 점검 실패 시 주문 제출 전에 멈춥니다.
+- 공휴일 다음 날 계획은 `-Step plan -ExecDate 2026-12-02` 처럼 실행일을 지정하세요.
+- ⚠ 이 스크립트(.ps1)는 개발 환경에 PowerShell 이 없어 **대표 PC에서 처음 실행**됩니다. 오류가 나면 화면 내용을 그대로 알려 주세요(키 값은 출력되지 않습니다).
+
+## 0. 준비 (D-1, 한 번만) — 맥·리눅스 또는 수동 설치
 
 1. Python 3.11 이상 설치 → 저장소 내려받기 → `claude/stock-king-03-dev` 브랜치
 2. `pip install -e ".[dev]"` 후 `python -m pytest` → 전부 통과 확인

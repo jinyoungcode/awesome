@@ -118,3 +118,11 @@
 - `OrderRequest.exit_reason` 추가, S02 실행기·T2가 사유 코드 전달
 - KIS 모의 시장가 미지원 대비: `STOCKKING_KR_SELL_MODE=marketable_limit` → 기준가×0.98 호가 올림 지정가 (`krx.ceil_to_tick`, `marketable_sell_limit`)
 - 테스트 169개 통과
+
+## 2026-11-25 — Codex 검토 버그 수정 + 윈도우 실행 환경
+
+- Codex #1·#2 수정(1e98c90): 제출 시 미체결 매수 현금·슬롯 예약, 재시작 후 재제출 방지, 부분체결 누적 반영. 경계 사례(110% 주문 비중 22% 초과) 리스크실 판단 요청
+- 윈도우: `scripts/setup_windows.ps1`(Python·git 확인, .venv, 설치, 테스트, `%APPDATA%\stockking\secrets.env` 자리·본인만 읽기 권한, 오프라인 훈련, 한글 요약), `scripts/paper_day.ps1 -Step check|open|drill|cancel|close|plan`
+- 비밀값: 윈도우 기본 경로 `%APPDATA%\stockking\secrets.env`, OneDrive 폴더 거부, 메모장 BOM 허용
+- `data/` gitignore (유료·약관 제한 데이터 커밋 방지)
+- ⚠ .ps1 은 개발 환경에 PowerShell 이 없어 미실행 — 대표 PC 첫 실행으로 검증 필요
