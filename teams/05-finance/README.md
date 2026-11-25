@@ -7,6 +7,7 @@
 | 3. 장부 양식 | [ledger/README.md](ledger/README.md) + `ledger/*.csv` | **v0.2** — 원화·달러, 자동/수동 분리(D-029), 환전·세금 충당금 장부 추가 |
 | 4. 월간 결산 보고서 양식 | [MONTHLY_REPORT_TEMPLATE.md](MONTHLY_REPORT_TEMPLATE.md) | **v0.2** — 시장별·자동/수동·D-028 한도 반영 |
 | 5. 운영 비용 예산 | [OPEX_BUDGET.md](OPEX_BUDGET.md) | **v0.2** — 분봉 월 10만 원(D-017) 반영 |
+| (추가) 3일 모의 회계 절차·결산 양식 | [PAPER_3DAY_FINANCE.md](PAPER_3DAY_FINANCE.md) | v0.2 — 11/26·11/27·11/30 모의(D-042), 첫 체결일 수수료 확정(C-2) 절차 + 결산 요약 양식(12/1 보고) |
 
 ## 회계팀 후속 일정
 - 3일 모의(D-023) 중: 모의 체결내역으로 수수료·세금 처리 1차 대사(C-2)
