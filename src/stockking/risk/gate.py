@@ -36,7 +36,9 @@ class RiskLimits:
     max_orders_per_minute: int = 10         # 폭주 방지(무한루프 주문 차단)
     price_band_pct: float = 0.30            # 국내: 기준가 대비 ±30%(가격제한폭) 밖 지정가 거부
     us_price_band_pct: float | None = None  # 미국: 가격제한폭 없음 → 기본 검사 생략(값을 주면 적용)
-    allow_market_orders: bool = False       # 시장가 기본 금지(모의투자 일부 미지원·슬리피지)
+    # 시장가 총 스위치. 켜도 '국내 청산 매도 + 청산 사유 코드'만 허용 (리스크관리실 결정, 2026-11-24)
+    allow_market_orders: bool = False
+    market_sell_exit_reasons: tuple[str, ...] = ("X_STOP", "X_TP", "X_TIME", "X_ADMIN", "X_KILL", "X_TECH")
     kill_on_daily_loss: bool = True
     # D-016/D-028: 원금 대비 이 비율 손실 시 최종 손절(킬스위치). None = 검사 안 함
     final_stop_pct: float | None = 0.20
@@ -154,9 +156,16 @@ class RiskGate:
         if len(self._recent_orders) >= L.max_orders_per_minute:
             reasons.append(f"ORDER_RATE: 분당 {L.max_orders_per_minute}건 초과")
 
-        # 3. 주문 유형
-        if order.order_type is OrderType.MARKET and not L.allow_market_orders:
-            reasons.append("MARKET_ORDER_NOT_ALLOWED")
+        # 3. 주문 유형 — 시장가는 국내 청산 매도만(사유 코드 필수). 국내 매수·미국은 지정가만
+        if order.order_type is OrderType.MARKET:
+            if not L.allow_market_orders:
+                reasons.append("MARKET_ORDER_NOT_ALLOWED")
+            elif order.side is Side.BUY:
+                reasons.append("MARKET_BUY_NOT_ALLOWED: 매수는 지정가만")
+            elif market_of(order.symbol) is not Market.KR:
+                reasons.append("MARKET_US_NOT_ALLOWED: 미국은 지정가만")
+            elif order.exit_reason not in L.market_sell_exit_reasons:
+                reasons.append(f"MARKET_SELL_NO_EXIT_REASON: 청산 사유 코드 필요 (받은 값 {order.exit_reason!r})")
 
         # 4. 가격 — 기준가 없으면 거부(fail-closed)
         price = order.limit_price if order.order_type is OrderType.LIMIT else account.prices.get(order.symbol)

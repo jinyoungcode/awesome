@@ -144,3 +144,18 @@ def test_paper_report_c2():
     rep = RecoveryReport()
     rows = dict((n, s) for n, s, _ in build_report([], [], rep, [], [{"date": "d", "match": True}]))
     assert rows["C2 신호 일치 100%"] == "PASS"
+
+
+def test_runner_sell_modes(monkeypatch):
+    st = state()
+    st["positions"] = {"000200": {"qty": 1, "entry_price": 28_000, "entry_date": "2025-09-01",
+                                  "init_stop": 25_760, "holding_days": 5, "exception": ""}}
+    row = [{"signal_date": "2025-09-01", "ticker": "000200", "side": "SELL", "order_type": "MOO", "qty": "1",
+            "limit_price": "", "init_stop": "", "reason_code": "X_TIME", "exception": ""}]
+    k = FakeKis()
+    R.submit_plan(row, st, k, Journal(), {"000200": 28_500}, mode=TradingMode.PAPER)
+    assert k.sent[0].order_type.value == "market" and k.sent[0].exit_reason == "X_TIME"
+    monkeypatch.setenv("STOCKKING_KR_SELL_MODE", "marketable_limit")
+    k2 = FakeKis()
+    R.submit_plan(row, st, k2, Journal(), {"000200": 28_500}, mode=TradingMode.PAPER)
+    assert k2.sent[0].order_type.value == "limit" and k2.sent[0].limit_price == 27_950

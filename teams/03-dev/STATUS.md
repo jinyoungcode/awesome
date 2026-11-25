@@ -111,3 +111,10 @@
 - D-025 해석(리스크실 확정) docs/DECISIONS.md 기록, main(4f10468) 병합 반영
 - 테스트 156개 통과
 - 외부 의존: 자료팀 입력 파일 4종(PAPER_RUNBOOK §3-1)
+
+## 2026-11-25 — 시장가 규칙 (리스크관리실 결정)
+
+- 관문: 시장가는 국내 청산 매도 + 사유 코드(X_STOP/X_TP/X_TIME/X_ADMIN/X_KILL, D-027 T2용 X_TECH)만, 수량 ≤ 보유. 국내 매수·미국은 지정가만
+- `OrderRequest.exit_reason` 추가, S02 실행기·T2가 사유 코드 전달
+- KIS 모의 시장가 미지원 대비: `STOCKKING_KR_SELL_MODE=marketable_limit` → 기준가×0.98 호가 올림 지정가 (`krx.ceil_to_tick`, `marketable_sell_limit`)
+- 테스트 169개 통과

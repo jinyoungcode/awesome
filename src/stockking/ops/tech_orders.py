@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,7 @@ from ..audit import Journal
 from ..config import TradingMode
 from ..domain import AccountSnapshot, OrderRequest, OrderStatus, OrderType, Position, Side
 from ..execution import OrderRouter
-from ..krx import floor_to_tick
+from ..krx import floor_to_tick, marketable_sell_limit
 from ..risk import KillSwitch, RiskGate
 from ..risk.stages import capital_warning
 from ..risk.stages import limits_for, resolve_stage
@@ -138,8 +139,13 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
         held = positions.get(symbol)
         if not held or held.quantity < 1:
             raise RuntimeError("T1 보유분이 아직 없습니다(미체결) — 체결 확인 후 실행")
-        order = OrderRequest(symbol, Side.SELL, 1, OrderType.MARKET, None, STRATEGY_ID)
-        limits = replace(limits, allow_market_orders=True)  # T2 목적이 시장가 매도 경로 점검 — 관문은 그대로 통과해야 함
+        # T2 목적 = 국내 시장가 매도 경로 점검(KIS 모의 지원 여부 확인 겸). 미지원이면 시장성 지정가 모드로 재실행
+        if os.environ.get("STOCKKING_KR_SELL_MODE", "market").lower() == "marketable_limit":
+            order = OrderRequest(symbol, Side.SELL, 1, OrderType.LIMIT, marketable_sell_limit(q["base_price"] or q["price"]),
+                                 STRATEGY_ID, exit_reason="X_TECH")
+        else:
+            order = OrderRequest(symbol, Side.SELL, 1, OrderType.MARKET, None, STRATEGY_ID, exit_reason="X_TECH")
+        limits = replace(limits, allow_market_orders=True)  # 관문은 그대로 통과해야 함(국내·매도·사유 코드 검사)
     elif scenario == "T3":
         order = OrderRequest(symbol, Side.BUY, 1, OrderType.LIMIT, floor_to_tick(int(q["price"] * T3_DISCOUNT)),
                              STRATEGY_ID)

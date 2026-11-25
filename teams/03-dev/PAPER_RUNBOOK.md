@@ -57,6 +57,8 @@
 | 장중 | `python -m stockking.ops.tech_orders --run T3 --symbol 005930 --operator 대표` |
 | 15:15 이후 | `python -m stockking.ops.tech_orders --run T3-cancel --operator 대표` |
 
+**시장가 매도 지원 확인(리스크실 요청):** T2(국내 시장가 매도)가 KIS 모의에서 '주문 유형 미지원' 류로 거부되면 `STOCKKING_KR_SELL_MODE=marketable_limit` 를 설정하세요. 이후 S02 청산과 T2가 기준가 × 0.98(호가 올림) 시장성 지정가로 나갑니다.
+
 T4(미국)는 D-033(T0 국내만)으로 3일 모의 범위 밖입니다. T5(1주 예외)는 S02 실행기가 1주 예외 주문을 내면 그것으로 확인됩니다.
 
 ## 3. 통과 점검표 (D-024 확정) 와 준비 상태

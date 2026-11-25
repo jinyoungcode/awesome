@@ -55,6 +55,7 @@ class OrderRequest:
     stop_price: float | None = None            # 매수 시 초기 손절가(원 환산) — 1건 손실 2% 검사(D-028)
     order_target: int | None = None            # D-005 주문 목표(원). 주면 관문이 90~110%·1주 예외를 검사
     sizing_exception: str = ""                 # "" | ONE_SHARE_UNDER | ONE_SHARE_OVER (D-021/D-036)
+    exit_reason: str = ""                      # 매도 청산 사유(X_STOP/X_TP/X_TIME/X_ADMIN/X_KILL…) — 시장가 매도에 필수
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -29,6 +30,7 @@ from ..data import load_bars_csv
 from ..domain import AccountSnapshot, OrderRequest, OrderStatus, OrderType, Position, Side
 from ..execution import OrderRouter
 from ..indicators import sma
+from ..krx import marketable_sell_limit
 from ..market import Market, market_of
 from ..risk import KillSwitch, RiskGate
 from ..risk.stages import limits_for, operating_capital, resolve_stage
@@ -102,6 +104,14 @@ def make_plan(state: dict, bars, universe: set[str], markets: dict[str, str], in
 
 
 # ---------------- submit / cancel / sync ----------------
+def kr_sell_mode() -> str:
+    """국내 청산 매도 방식: market(기본, MOO) | marketable_limit (KIS 모의 시장가 미지원 시)."""
+    m = os.environ.get("STOCKKING_KR_SELL_MODE", "market").strip().lower()
+    if m not in ("market", "marketable_limit"):
+        raise ValueError("STOCKKING_KR_SELL_MODE: market | marketable_limit")
+    return m
+
+
 def runner_limits():
     # 전략 주문: 손절가 필수, 청산은 장전 시장가(MOO) 허용 (COMMON_SPEC §7.1)
     return replace(limits_for(resolve_stage()), require_stop_for_buy=True, allow_market_orders=True)
@@ -122,7 +132,12 @@ def submit_plan(rows: list[dict], state: dict, kis, journal: Journal, prices: di
     results = []
     for r in sorted(rows, key=lambda x: x["side"] != "SELL"):   # 청산 먼저 (§6)
         if r["side"] == "SELL":
-            o = OrderRequest(r["ticker"], Side.SELL, int(r["qty"]), OrderType.MARKET, None, STRATEGY_ID)
+            if kr_sell_mode() == "market":
+                o = OrderRequest(r["ticker"], Side.SELL, int(r["qty"]), OrderType.MARKET, None, STRATEGY_ID,
+                                 exit_reason=r["reason_code"])
+            else:   # KIS 모의가 시장가를 받지 않으면 시장성 지정가로 대체
+                o = OrderRequest(r["ticker"], Side.SELL, int(r["qty"]), OrderType.LIMIT,
+                                 marketable_sell_limit(prices[r["ticker"]]), STRATEGY_ID, exit_reason=r["reason_code"])
         else:
             o = OrderRequest(r["ticker"], Side.BUY, int(r["qty"]), OrderType.LIMIT, int(r["limit_price"]),
                              STRATEGY_ID, stop_price=float(r["init_stop"]), order_target=target,
