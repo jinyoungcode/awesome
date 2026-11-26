@@ -46,6 +46,11 @@ class CostModel:
         return self.sell_tax(gross) + self.us_reg_fees(gross, qty)
 
     @classmethod
+    def kr_v024(cls, slippage_bps: float = 5) -> "CostModel":
+        """회계팀 COST_MODEL v0.2.4 국내 기본(D-045): 수수료 편도 0.15%(영업점 0.147% + 유관 가능성), 2026~ 매도세 0.20%."""
+        return cls(commission_rate=0.0015, sell_tax_rate=0.0020, slippage_bps=slippage_bps, source="COST_MODEL v0.2.4")
+
+    @classmethod
     def us_from_usd(cls, commission_rate: float, usdkrw: float, slippage_bps: float, source: str,
                     sec_fee_rate: float = 0.0000206, taf_usd_per_share: float = 0.000195,
                     taf_usd_max: float = 9.79) -> "CostModel":

@@ -20,9 +20,8 @@ from .common import Checklist
 from .kis_session import add_key_args, make_client
 from .tech_orders import load_records
 
-# 회계팀 COST_MODEL v0.2 국내 가정(유관기관 포함 0.018%/편도, 매도세 0.20%) — 실측(C-2)으로 확정 예정
-PAPER_COSTS = CostModel(commission_rate=0.00018, sell_tax_rate=0.0020, slippage_bps=0,
-                        source="COST_MODEL v0.2 추정")
+# 회계팀 COST_MODEL v0.2.4 국내 기본(D-045: 현 계좌 영업점 요율 0.147% → 0.15% 보수) — 실측(C-2)으로 확정 예정
+PAPER_COSTS = CostModel.kr_v024(slippage_bps=0)
 
 
 def ledger_dir(mode: str, day: date) -> Path:
@@ -46,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     bal = kis.inquire_balance()
 
     if a.open:
+        from ..risk.stages import _auto_requested, fix_auto_capital, operating_capital
+        if _auto_requested():   # D-046: 1일차 첫 실행 시점의 주문 가능 금액 전액으로 고정
+            print(f"운용 금액 auto: {fix_auto_capital(bal['cash_d2'] or bal['cash']):,}원 (var/operating_capital.json)")
         state = {"date": a.date, "cash_d2": bal["cash_d2"], "equity": {"AUTO": bal["total_equity"]},
+                 "principal": operating_capital(),   # D-046: 장부 원금 = 운용 금액
                  "qty": {s: v["qty"] for s, v in bal["details"].items()}}
         d.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -82,20 +82,22 @@ python -m stockking.ops.connect_check
   [PASS] 1. 토큰 발급
   [PASS] 2. 현재가 조회 — 005930 현재가 …원 / 기준가 …원
   [PASS] 3. 잔고 조회 — 예수금 …원, 보유 0종목
-  [PASS] 3-1. 운용 금액 ≤ 모의 예수금 (D-044) — 운용 금액 150,000원
+  [PASS] 3-1. 운용 금액 ≤ 모의 예수금 (D-044) — 운용 금액 …원
 (주문 단계 생략 — 장중에 --order 로 다시 실행하세요)
 == 모의 계좌 연결 점검: 통과 (4/4) ==
 ```
 
-### 7. (선택) 모의 운용 금액 정하기 — D-044
-기본은 **15만 원**입니다. 모의 계좌 예수금 이하에서 다른 금액으로 시험하려면, 매일 여는 PowerShell 창에서 첫 명령 전에:
+### 7. 모의 운용 금액 — D-044·D-046
+**대표님이 따로 정하지 않으면 1일차 시작 시점의 모의 주문 가능 금액 전액**이 운용 금액이자 장부 원금입니다(D-046). 매일 여는 PowerShell 창에서 첫 명령 전에 아래 **둘 중 하나**를 입력합니다(아래 B-1 '매일 시작할 때'에 포함):
 ```powershell
-$env:STOCKKING_OPERATING_CAPITAL = "1000000"     # 예: 100만 원 (쉼표 써도 됨: "1,000,000")
+$env:STOCKKING_OPERATING_CAPITAL = "auto"        # 기본(D-046): 1일차 첫 점검 때 주문 가능 금액 전액으로 고정
+$env:STOCKKING_OPERATING_CAPITAL = "1000000"     # 또는 직접 지정: 예 100만 원 (쉼표 가능 "1,000,000")
 ```
-- 주문 목표(÷5)·비중 22%·일 손실 −5%·1주 예외(가격 ≤ 30%, 손실 ≤ 2%)가 **모두 이 금액 기준**으로 바뀝니다.
-- 이 금액이 모의 예수금보다 크면 `3-1` 이 FAIL 이 되고 S02 주문 제출이 멈춥니다.
-- **S02 첫 주문계획(18:30 plan) 전에 정하세요.** 가상 장부(`var\s02\state.json`)가 처음 만들어질 때 금액이 고정됩니다. 바꾸려면 보유 종목이 없을 때 그 파일을 지우고 다시 plan.
-- 실전(T0)은 15만 원 고정이며 이 설정을 받지 않습니다(D-031·D-032).
+- `auto` 는 1일차 첫 `ledger_close --open`(또는 `connect_check`) 때 읽은 **D+2 예수금(주문 가능 금액 근사)** 을 `var\operating_capital.json` 에 저장하고, 이후 5거래일 동안 **같은 값**을 씁니다. 다시 정하려면 그 파일을 지우세요(보유 종목이 없을 때만).
+- 주문 목표(÷5)·비중 22%·일 손실 −5%·1주 예외(가격 ≤ 30%, 손실 ≤ 2%)가 **모두 이 금액 기준**입니다.
+- 직접 지정한 금액이 모의 예수금보다 크면 `3-1` 이 FAIL 이 되고 S02 주문 제출이 멈춥니다.
+- **S02 첫 주문계획(1일차 18:30 plan) 전에 정해져 있어야** 합니다. 가상 장부(`var\s02\state.json`)가 처음 만들어질 때 금액이 고정됩니다.
+- 둘 다 입력하지 않으면 15만 원으로 계산됩니다. 실전(T0)은 15만 원 고정이며 `auto`·다른 금액을 거부합니다(D-031·D-032).
 
 ### 자주 나는 오류
 | 화면 | 조치 |
@@ -127,11 +129,12 @@ cd C:\stockking
 Set-ExecutionPolicy -Scope Process Bypass -Force
 .\.venv\Scripts\Activate.ps1
 git pull
+$env:STOCKKING_OPERATING_CAPITAL = "auto"      # D-046 기본. 금액을 직접 정하셨으면 그 숫자로 (§A-7)
 ```
 
 | 시각 | 명령 | ▶ 정상이면 | 점검표 |
 |---|---|---|---|
-| 08:25 | `python -m stockking.ops.ledger_close --open` | `시작점 저장: var\ledger\paper\2026\open_state_20261126.json` | C1 준비 |
+| 08:25 | `python -m stockking.ops.ledger_close --open` | (1일차·auto) `운용 금액 auto: …원` 다음 `시작점 저장: var\ledger\paper\2026\open_state_20261126.json` | C1 준비 |
 | 08:30 | `python -m stockking.ops.startup_check` | 마지막 줄 `신규 주문 시작 가능` | C5 준비 |
 | 08:35 | `python -m stockking.ops.connect_check` | `통과 (4/4)` | — |
 | 09:30 이후 | `python -m stockking.ops.connect_check --order` | `통과 (7/7)` — 1주 매수(현재가 −10%) 접수 → 취소 → 주문내역 확인 | C6(1건) |

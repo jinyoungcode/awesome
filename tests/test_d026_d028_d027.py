@@ -224,3 +224,46 @@ def test_operating_capital_and_capital_error(monkeypatch):
     monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "0")
     with pytest.raises(ValueError):
         operating_capital()
+
+
+def test_auto_capital_fixed_once_and_paper_only(tmp_path, monkeypatch):
+    from stockking.risk.stages import fix_auto_capital, operating_capital
+    f = tmp_path / "operating_capital.json"
+    monkeypatch.setenv("STOCKKING_AUTO_CAPITAL_FILE", str(f))
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    monkeypatch.delenv("STOCKKING_CAPITAL_STAGE", raising=False)
+    with pytest.raises(RuntimeError, match="connect_check"):
+        operating_capital()                                      # 고정 전
+    assert fix_auto_capital(9_876_543, today="2026-11-26") == 9_876_543
+    assert fix_auto_capital(1_000_000) == 9_876_543              # 이후 날짜에도 처음 값 유지
+    assert operating_capital() == 9_876_543
+    monkeypatch.setenv("STOCKKING_CAPITAL_STAGE", "t0")
+    with pytest.raises(ValueError, match="모의투자 전용"):
+        operating_capital()
+    with pytest.raises(ValueError, match="모의투자 전용"):
+        fix_auto_capital(1)
+
+
+def test_kr_v024_cost_model():
+    from stockking.backtest.costs import CostModel
+    c = CostModel.kr_v024()
+    assert c.commission(30_000) == 45 and c.sell_tax(30_000) == 60 and c.source == "COST_MODEL v0.2.4"
+
+
+def test_ledger_open_fixes_auto_capital(tmp_path, monkeypatch):
+    """1일차 장부 시작점(08:25)이 연결 점검(08:35)보다 먼저여도 auto 가 고정되고 원금이 기록된다."""
+    import json
+    from stockking.ops import ledger_close
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    monkeypatch.setenv("STOCKKING_AUTO_CAPITAL_FILE", str(tmp_path / "cap.json"))
+    monkeypatch.delenv("STOCKKING_CAPITAL_STAGE", raising=False)
+
+    class K:
+        def inquire_balance(self):
+            return {"cash": 5_000_000, "cash_d2": 5_000_000, "total_equity": 5_000_000, "positions": {}, "details": {}}
+    monkeypatch.setattr(ledger_close, "make_client", lambda a: K())
+    assert ledger_close.main(["--open", "--date", "20261126"]) == 0
+    st = json.loads((tmp_path / "var/ledger/paper/2026/open_state_20261126.json").read_text(encoding="utf-8"))
+    assert st["principal"] == 5_000_000
+    assert json.loads((tmp_path / "cap.json").read_text(encoding="utf-8"))["capital"] == 5_000_000

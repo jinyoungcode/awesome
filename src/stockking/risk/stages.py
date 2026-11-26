@@ -23,11 +23,47 @@ STARTING_CAPITAL = 150_000
 SLOTS = 5   # 동시 보유 한도 → 주문 목표 = (시작 자금 + 실현 순손익) ÷ 5 = 30,000원
 
 
+AUTO_CAPITAL_FILE = "var/operating_capital.json"
+
+
+def _auto_requested() -> bool:
+    return os.environ.get("STOCKKING_OPERATING_CAPITAL", "").strip().lower() == "auto"
+
+
+def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today: str | None = None) -> int:
+    """D-046: 'auto' 이면 모의 1일차 시작 시점 주문 가능 금액 전액을 운용 금액으로 한 번 고정 저장.
+    이미 고정돼 있으면 그 값을 그대로 쓴다(5거래일 내내 같은 값)."""
+    import json
+    from datetime import date
+    from pathlib import Path
+    if resolve_stage() is not CapitalStage.PAPER:
+        raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
+    f = Path(path or os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+    if f.exists():
+        return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
+    if broker_orderable_cash <= 0:
+        raise ValueError("모의 주문 가능 금액이 0 이하라 운용 금액을 정할 수 없습니다")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"capital": int(broker_orderable_cash), "fixed_on": today or date.today().isoformat(),
+                             "source": "KIS 모의 D+2 예수금(주문 가능 금액 근사)", "decision": "D-046"},
+                            ensure_ascii=False, indent=2), encoding="utf-8")
+    return int(broker_orderable_cash)
+
+
 def operating_capital() -> int:
     """운용 기준 자금. 기본 15만 원(D-032, T0 실전 고정).
-    모의투자는 STOCKKING_OPERATING_CAPITAL 로 모의 계좌 예수금 이하 임의 금액을 정할 수 있다(D-044).
-    비중·손실 한도·1주 예외는 모두 이 금액 기준 비율로 계산된다."""
+    모의투자는 STOCKKING_OPERATING_CAPITAL 로 모의 계좌 예수금 이하 임의 금액(D-044), 또는 'auto'
+    (1일차 시작 시점 주문 가능 금액 전액을 고정, D-046)를 쓴다. 비중·손실 한도·1주 예외는 이 금액 기준 비율."""
     raw = os.environ.get("STOCKKING_OPERATING_CAPITAL", "").replace(",", "").replace("_", "").strip()
+    if raw.lower() == "auto":
+        import json
+        from pathlib import Path
+        if resolve_stage() is not CapitalStage.PAPER:
+            raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
+        f = Path(os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+        if not f.exists():
+            raise RuntimeError("운용 금액 auto 가 아직 고정되지 않았습니다 — 먼저 connect_check 를 실행하세요(D-046)")
+        return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
     value = int(raw) if raw else STARTING_CAPITAL
     if value <= 0:
         raise ValueError("STOCKKING_OPERATING_CAPITAL 은 양수여야 합니다")

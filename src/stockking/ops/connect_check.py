@@ -58,8 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         bal = kis.inquire_balance()
         cl.check("3. 잔고 조회", True, f"예수금 {bal['cash']:,}원, 보유 {len(bal['positions'])}종목")
-        err = capital_error(bal["cash_d2"] or bal["cash"])
-        from ..risk.stages import operating_capital
+        from ..risk.stages import _auto_requested, fix_auto_capital, operating_capital
+        orderable = bal["cash_d2"] or bal["cash"]
+        if _auto_requested():
+            print(f"  운용 금액 auto(D-046): {fix_auto_capital(orderable):,}원으로 고정 (var/operating_capital.json)")
+        err = capital_error(orderable)
         cl.check("3-1. 운용 금액 ≤ 모의 예수금 (D-044)", err is None, err or f"운용 금액 {operating_capital():,}원")
     except Exception as e:  # noqa: BLE001
         cl.check("3. 잔고 조회", False, str(e))

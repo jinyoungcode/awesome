@@ -138,3 +138,10 @@
 - D-044: `STOCKKING_OPERATING_CAPITAL` 로 모의 운용 금액 자유 설정(쉼표 허용), 미설정 15만 원, 실전 T0는 15만 원 외 값 거부. 운용 금액 > 모의 예수금이면 connect_check 3-1 FAIL·tech_orders/s02 submit 중단(이하이면 경고 없음)
 - D-043: 5거래일 일정, D-027 판정 4일차(12/1)·실행 5일차(12/2) 문서 반영. `paper_day.ps1 -OperatingCapital`
 - 179 passed
+
+## 2026-11-26 — D-045·D-046
+
+- D-045: 모의 장부 수수료 추정 = `CostModel.kr_v024()` (국내 0.15%, 매도세 0.20%, source "COST_MODEL v0.2.4")
+- D-046: `STOCKKING_OPERATING_CAPITAL=auto` — 1일차 첫 `ledger_close --open`/`connect_check` 때 D+2 예수금(주문 가능 금액 근사)을 `var/operating_capital.json` 에 고정, 5거래일 동일 사용, 장부 open_state 에 principal 기록. 실전 T0 auto 거부. `paper_day.ps1` 기본 auto, WINDOWS_QUICKSTART 매일 시작 명령에 포함
+- 미결: 주문 가능 금액을 D+2 예수금으로 근사 — KIS 매수가능조회(VTTC8908R) 값과 다르면 1일차 실측 후 교체
+- 181 passed
