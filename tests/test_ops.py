@@ -222,3 +222,13 @@ def test_windows_default_secret_path(monkeypatch):
     monkeypatch.setenv("APPDATA", "/fake/AppData/Roaming")
     assert config.default_secrets_file(is_windows=True) == Path("/fake/AppData/Roaming/stockking/secrets.env")
     assert config.default_secrets_file(is_windows=False).parts[-3:] == (".config", "stockking", "secrets.env")
+
+
+def test_reconcile_cancel_odno_fallback_and_chain():
+    """orgn_odno 가 비어 온 취소 행은 감사 로그 cancel_odno 로 매칭, 정정의 정정(사슬)도 시스템 것."""
+    from stockking.ops.daily_reconcile import cancel_order_ids
+    rows = [{"odno": "0000025951", "orgn_odno": ""}, {"odno": "0000025953", "orgn_odno": ""},
+            {"odno": "0000025960", "orgn_odno": "0000025953"}]
+    d = compare({"SK-1": "0000025951"}, rows, cancel_order_ids([{"event": "cancel_response", "cancel_odno": "0000025953"}]))
+    assert d["linked_cancel_modify"] == ["25953", "25960"] and d["unknown_to_system"] == []
+    assert compare({"SK-1": "0000025951"}, rows)["unknown_to_system"] == ["25953", "25960"]   # 보조 정보 없으면 수동 취급

@@ -21,7 +21,7 @@ from .kis_session import add_key_args, make_client
 from .recovery import scan_journal
 
 
-def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
+def compare(journal_accepted: dict[str, str], broker_rows: list[dict], cancel_odnos: set[str] | None = None) -> dict:
     norm = lambda x: (x or "").lstrip("0")  # noqa: E731
     ours = {norm(odno): cid for cid, odno in journal_accepted.items() if odno}
     theirs = {norm(r["odno"]): r for r in broker_rows}
@@ -29,6 +29,11 @@ def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
     # KIS 는 취소·정정 주문을 별도 주문번호(odno)로 내역에 남기고 orgn_odno 에 원주문번호를 둔다.
     # 원주문(또는 그 취소·정정 사슬)이 시스템 주문이면 수동 주문이 아니라 시스템 주문의 취소·정정이다.
     known, linked = set(ours), set()
+    # 보조: orgn_odno 가 비어 와도 감사 로그에 남긴 시스템 취소주문번호(cancel_odno)는 시스템 취소로 본다
+    for c in cancel_odnos or ():
+        if norm(c) in theirs and norm(c) not in known:
+            known.add(norm(c))
+            linked.add(norm(c))
     changed = True
     while changed:
         changed = False
@@ -46,6 +51,12 @@ def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
     }
 
 
+def cancel_order_ids(records: list[dict]) -> set[str]:
+    """감사 로그의 취소 응답에서 증권사 취소주문번호(cancel_odno)."""
+    return {str(r["cancel_odno"]) for r in records
+            if r.get("event") in ("cancel_response", "s02_cancel", "tech_order") and r.get("cancel_odno")}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--date", default=datetime.now().strftime("%Y%m%d"))
@@ -55,7 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     kis = make_client(a)
     rows, bal = kis.inquire_daily_orders(a.date), kis.inquire_balance()
     rep = scan_journal(journal_path(day))
-    diff = compare(rep.accepted, rows)
+    records = []
+    if journal_path(day).exists():
+        for line in journal_path(day).read_text(encoding="utf-8").splitlines():
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    diff = compare(rep.accepted, rows, cancel_order_ids(records))
 
     cl = Checklist(f"일일 대사 {a.date}")
     if not rows and rep.accepted:
