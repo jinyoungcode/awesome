@@ -246,3 +246,46 @@ def test_s02_inputs_status_now_and_kospi_only(tmp_path):
     assert {r["symbol"] for r in csv.DictReader((tmp_path / "index.csv").open())} == {"KOSPI200", "KOSDAQ150"}
     m2 = s02_inputs.build(KisQuotes(FakeClient()), T, ["005930"], [], tmp_path / "b", log=lambda *_: None, status_now=False)
     assert m2["universe_passed"] == 0
+
+
+def test_resolve_capital_number_auto_and_default(tmp_path, monkeypatch):
+    """D-046: STOCKKING_OPERATING_CAPITAL=auto 여도 오류 없이 고정 파일 값을 읽는다."""
+    import json
+    from stockking_data.capital import resolve_capital
+    for k in ("STOCKKING_AUTO_CAPITAL_FILE", "STOCKKING_DATA_DIR", "STOCKKING_OPERATING_CAPITAL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.chdir(tmp_path)
+    warns = []
+    assert resolve_capital("10,000,000")[0] == 10_000_000
+    assert resolve_capital("auto", warn=warns.append) == (150_000, "default") and warns
+    assert resolve_capital("", warn=warns.append)[0] == 150_000
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "operating_capital.json").write_text(json.dumps({"capital": 9_876_543}))
+    assert resolve_capital("auto")[0] == 9_876_543
+    assert resolve_capital(" AUTO ")[0] == 9_876_543
+    data = tmp_path / "d"; data.mkdir()
+    (data / "operating_capital.json").write_text(json.dumps({"capital": 2_000_000}))
+    monkeypatch.setenv("STOCKKING_AUTO_CAPITAL_FILE", str(data / "operating_capital.json"))
+    assert resolve_capital("auto")[0] == 2_000_000          # 명시 파일 우선
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    assert resolve_capital()[0] == 2_000_000                 # 환경변수 auto
+    with pytest.raises(ValueError):
+        resolve_capital("abc")
+    with pytest.raises(ValueError):
+        resolve_capital("-5")
+
+
+def test_cli_s02_inputs_accepts_auto_capital(tmp_path, monkeypatch):
+    """collect.py 인자 해석 단계에서 auto 때문에 ValueError가 나지 않아야 한다 (총괄 버그 신고 11/26)."""
+    import importlib.util
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location("collect_cli", HERE / "collect.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    got = {}
+    monkeypatch.setattr(mod, "_client", lambda live=False: KisQuotes(FakeClient()))
+    monkeypatch.setattr(mod.s02_inputs, "build", lambda *a, **k: got.update(k) or {"ok": True})
+    k2 = tmp_path / "k2.csv"; k2.write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8")
+    assert mod.main(["s02-inputs", "--kospi200", str(k2), "--out", str(tmp_path / "out")]) == 0
+    assert got["capital"] == 150_000
