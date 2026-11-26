@@ -52,7 +52,7 @@ python -m pip install -e ".[dev]"
 ```powershell
 python -m pytest -q
 ```
-▶ 정상이면: 마지막 줄 `187 passed` (숫자는 더 클 수 있음, **failed 가 없어야** 함)
+▶ 정상이면: 마지막 줄 `191 passed` (숫자는 더 클 수 있음, **failed 가 없어야** 함)
 
 ### 5. 모의투자 키 넣기 (저장소 밖, 본인만 읽기)
 ```powershell
@@ -108,6 +108,8 @@ $env:STOCKKING_OPERATING_CAPITAL = "1000000"     # 또는 직접 지정: 예 100
 | `KIS 토큰 발급 실패` | 실전 키가 아니라 **모의투자** 키인지, 앱키·시크릿이 바뀌지 않았는지 확인 |
 | `EGW00201` (호출 한도) | 1분 기다렸다 다시 실행 |
 | `.\.venv\Scripts\Activate.ps1 ... 스크립트를 실행할 수 없으므로` | 바로 앞의 `Set-ExecutionPolicy -Scope Process Bypass -Force` 를 같은 창에서 먼저 실행 |
+| `6. 주문내역에서 확인 — 내역 없음` | 주문·취소 자체는 정상입니다. 원인 확인용으로 `$env:STOCKKING_KIS_DEBUG = "1"` 입력 후 같은 명령을 다시 실행 → `var\logs\kis_raw_날짜.jsonl` 파일을 프로그램팀에 전달(계좌번호·키·토큰은 **** 로 가려짐) |
+| `중단: …` 한 줄로 끝남 | 예상된 오류를 안내하고 멈춘 것입니다(traceback 없음). 안내대로 조치 후 같은 명령 재실행 |
 | 그 외 | 화면을 그대로 캡처해 알려 주세요(키 값은 화면에 나오지 않습니다) |
 
 ---

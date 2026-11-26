@@ -151,3 +151,11 @@
 - 테스트 격리: conftest 가 모든 테스트를 tmp 폴더에서 실행, 운용 금액·모드·KIS 키 환경변수 제거, 비밀값·토큰 캐시·%APPDATA%·HOME 을 tmp 로 → 대표 PC 실제 `var/operating_capital.json`·`secrets.env`·`auto` 설정에 영향받지 않음(재현 확인)
 - 토큰 파일 캐시: 유효기간까지 `%APPDATA%\stockking\kis_paper_token.json`(본인만 읽기, 앱키 지문 일치·만료 60초 전까지만 사용) 재사용 → 1분 내 재실행 403 해소. 403/EGW00133 은 '1분 후 재시도' 안내, HTTP 오류 본문 보존
 - 187 passed
+
+## 2026-11-26 — 1일차 실측 대응 2 (주문내역 0건, traceback)
+
+- 주문내역 조회: TR·파라미터 변형(VTTC0081R/VTTC8001R × EXCG_ID_DVSN_CD=KRX 유무) 순차 시도, 성공 변형 기억, 모두 오류면 명확한 오류. 취소 판정에 cncl_cfrm_qty 추가, orgn_odno 수집
+- connect_check 6단계: 최대 5회 2초 간격 재조회, 실패 시 진단 안내. daily_reconcile: 시스템 접수 있는데 조회 0건이면 FAIL로 표시(대사 오판 방지)
+- 진단: STOCKKING_KIS_DEBUG=1 → var/logs/kis_raw_날짜.jsonl (계좌·키·토큰 마스킹, 토큰 발급 응답 미기록)
+- 운영 명령 전체 run_cli: 예상 오류는 traceback 없이 '중단: …' + 조치 안내, 종료코드 2 (Ctrl+C 130)
+- 191 passed. ⚠ 어떤 변형이 맞는지는 대표 PC 실측(진단 로그)으로 확정 필요

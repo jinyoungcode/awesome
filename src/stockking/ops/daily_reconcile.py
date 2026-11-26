@@ -46,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     diff = compare(rep.accepted, rows)
 
     cl = Checklist(f"일일 대사 {a.date}")
+    if not rows and rep.accepted:
+        cl.check("증권사 주문내역 조회 결과 있음", False,
+                 f"시스템 접수 {len(rep.accepted)}건인데 조회 0건 — 조회 문제 가능. "
+                 "$env:STOCKKING_KIS_DEBUG='1' 로 다시 실행해 var/logs/kis_raw_날짜.jsonl 을 프로그램팀에 전달")
     cl.check("시스템 접수 주문이 증권사 내역과 일치", not diff["missing_at_broker"], f"불일치 {diff['missing_at_broker']}")
     # D-029/D-030: 전용 계좌에서 수동 매매는 원칙적으로 없어야 함. 감지되면 별도 집계 대상으로 표시하고 미통과 처리
     cl.check("시스템이 모르는 주문 없음 (있으면 수동 매매로 분리 집계, D-029)", not diff["unknown_to_system"],
@@ -63,4 +67,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from .common import run_cli
+    raise SystemExit(run_cli(main))

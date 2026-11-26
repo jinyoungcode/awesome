@@ -35,7 +35,15 @@ TR_PAPER_BUY = "VTTC0012U"
 TR_PAPER_SELL = "VTTC0011U"
 TR_PAPER_CANCEL = "VTTC0013U"         # 정정취소 (구 VTTC0803U)
 TR_PAPER_BALANCE = "VTTC8434R"        # 잔고 조회
-TR_PAPER_DAILY_ORDERS = "VTTC8001R"   # 일별 주문체결 조회(3개월 이내)
+TR_PAPER_DAILY_ORDERS = "VTTC8001R"   # 일별 주문체결 조회(3개월 이내) — 구 TR
+# 1일차 실측: 주문·취소 접수됐는데 조회 0건 → KIS 개편(NXT 도입) 후 TR·파라미터 변형을 순서대로 시도
+# (TR ID 변경 VTTC8001R→VTTC0081R, 거래소 구분 EXCG_ID_DVSN_CD 추가로 알려짐 — 공식 문서 재확인 필요)
+DAILY_ORDER_VARIANTS = (
+    ("VTTC0081R", {"EXCG_ID_DVSN_CD": "KRX"}),
+    ("VTTC8001R", {"EXCG_ID_DVSN_CD": "KRX"}),
+    ("VTTC0081R", {}),
+    ("VTTC8001R", {}),
+)
 TR_PRICE = "FHKST01010100"            # 현재가 (실전·모의 공통)
 
 # 모의투자 해외주식(미국) 주문 TR ID (D-006, 공식 문서 재확인 필요)
@@ -61,6 +69,32 @@ def _urllib_transport(method: str, url: str, headers: dict, body: dict) -> dict:
         except (ValueError, UnicodeDecodeError):
             payload = {}
         return {"_http_status": e.code, **payload}
+
+
+_MASK_KEYS = {"cano", "acnt_prdt_cd", "appkey", "appsecret", "authorization", "access_token"}
+
+
+def _mask(obj):
+    if isinstance(obj, dict):
+        return {k: ("****" if k.lower() in _MASK_KEYS else _mask(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_mask(v) for v in obj]
+    return obj
+
+
+def _debug_log(method: str, path: str, tr_id: str, url: str, body: dict, res: dict) -> None:
+    """진단용 응답 원문 기록 (STOCKKING_KIS_DEBUG=1). 계좌번호·키·토큰은 **** 처리, 토큰 발급 응답은 기록 안 함."""
+    import time as _t
+    q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
+    rec = {"ts": _t.strftime("%Y-%m-%dT%H:%M:%S"), "method": method, "path": path, "tr_id": tr_id,
+           "params": _mask(q), "body": _mask(body or {}), "response": _mask(res)}
+    out = Path("var/logs") / f"kis_raw_{_t.strftime('%Y%m%d')}.jsonl"
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 
 # 토큰 재발급 제한(분당 1회 수준) 관련 오류 — 1일차 실측: 1분 안 재실행 시 HTTP 403
@@ -207,6 +241,8 @@ class KisPaperClient:
             url, body = f"{url}?{urllib.parse.urlencode(body)}", {}
         res = self._transport(method, url, headers, body)
         self.last_response = res  # 주문 직후 KRX_FWDG_ORD_ORGNO(취소에 필요) 확인용
+        if os.environ.get("STOCKKING_KIS_DEBUG") and not path.endswith("tokenP"):
+            _debug_log(method, path, headers.get("tr_id", ""), url, body, res)
         return res
 
     # --- 주문 ---
@@ -303,19 +339,35 @@ class KisPaperClient:
         return BrokerOrderResult(res.get("rt_cd") == "0", "", output.get("ODNO") or broker_order_id, res.get("msg1", ""))
 
     def inquire_daily_orders(self, yyyymmdd: str) -> list[dict]:
-        """당일 주문·체결 내역(첫 페이지). 각 행: odno, symbol, side, ord_qty, filled_qty, avg_price, canceled"""
-        res = self._ok(self._call("GET", "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
-                                  self._headers(TR_PAPER_DAILY_ORDERS), {
-                                      "CANO": self._creds.account_no, "ACNT_PRDT_CD": self._creds.account_product,
-                                      "INQR_STRT_DT": yyyymmdd, "INQR_END_DT": yyyymmdd, "SLL_BUY_DVSN_CD": "00",
-                                      "INQR_DVSN": "00", "PDNO": "", "CCLD_DVSN": "00", "ORD_GNO_BRNO": "",
-                                      "ODNO": "", "INQR_DVSN_3": "00", "INQR_DVSN_1": "",
-                                      "CTX_AREA_FK100": "", "CTX_AREA_NK100": ""}), "주문체결 조회")
-        rows = []
-        for r in res.get("output1") or []:
-            rows.append({"odno": r.get("odno", ""), "symbol": r.get("pdno", ""), "name": r.get("prdt_name", ""),
-                         "ord_date": r.get("ord_dt", yyyymmdd),
-                         "side": "sell" if r.get("sll_buy_dvsn_cd") == "01" else "buy",
-                         "ord_qty": int(r.get("ord_qty", 0)), "filled_qty": int(r.get("tot_ccld_qty", 0)),
-                         "avg_price": float(r.get("avg_prvs", 0) or 0), "canceled": r.get("cncl_yn") == "Y"})
-        return rows
+        """당일 주문·체결 내역. 각 행: odno, symbol, side, ord_qty, filled_qty, avg_price, canceled.
+
+        TR·파라미터 변형(DAILY_ORDER_VARIANTS)을 차례로 시도해 처음으로 내역이 나온 것을 쓰고, 그 변형을 기억한다.
+        모두 0건이면 [] (정말 주문이 없을 수도 있음). STOCKKING_KIS_DEBUG=1 이면 응답 원문을 진단 로그에 남긴다."""
+        variants = ([self._daily_variant] if getattr(self, "_daily_variant", None) else []) + \
+            [v for v in DAILY_ORDER_VARIANTS if v != getattr(self, "_daily_variant", None)]
+        errors = []
+        for tr_id, extra in variants:
+            params = {"CANO": self._creds.account_no, "ACNT_PRDT_CD": self._creds.account_product,
+                      "INQR_STRT_DT": yyyymmdd, "INQR_END_DT": yyyymmdd, "SLL_BUY_DVSN_CD": "00",
+                      "INQR_DVSN": "00", "PDNO": "", "CCLD_DVSN": "00", "ORD_GNO_BRNO": "", "ODNO": "",
+                      "INQR_DVSN_3": "00", "INQR_DVSN_1": "", "CTX_AREA_FK100": "", "CTX_AREA_NK100": "", **extra}
+            res = self._call("GET", "/uapi/domestic-stock/v1/trading/inquire-daily-ccld", self._headers(tr_id), params)
+            if res.get("rt_cd") != "0":
+                errors.append(f"{tr_id}{'+' + ','.join(extra) if extra else ''}: [{res.get('msg_cd', '')}] {res.get('msg1', '')}")
+                continue
+            out = res.get("output1") or []
+            if out:
+                self._daily_variant = (tr_id, extra)
+                return [self._parse_daily_row(r, yyyymmdd) for r in out]
+        if errors and len(errors) == len(variants):
+            raise RuntimeError("KIS 주문체결 조회 실패: " + " / ".join(errors))
+        return []
+
+    @staticmethod
+    def _parse_daily_row(r: dict, yyyymmdd: str) -> dict:
+        return {"odno": r.get("odno", ""), "orgn_odno": r.get("orgn_odno", ""), "symbol": r.get("pdno", ""),
+                "name": r.get("prdt_name", ""), "ord_date": r.get("ord_dt", yyyymmdd),
+                "side": "sell" if r.get("sll_buy_dvsn_cd") == "01" else "buy",
+                "ord_qty": int(r.get("ord_qty", 0) or 0), "filled_qty": int(r.get("tot_ccld_qty", 0) or 0),
+                "avg_price": float(r.get("avg_prvs", 0) or 0),
+                "canceled": r.get("cncl_yn") == "Y" or int(r.get("cncl_cfrm_qty", 0) or 0) > 0}
