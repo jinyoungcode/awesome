@@ -1,7 +1,6 @@
 """자금 단계별 리스크 한도 (D-014, D-016, D-025, D-028).
 
-`RiskLimits()` 기본값은 초기 임시값이다. 운영 코드는 반드시 `limits_for(stage)`를 쓴다.
-(PR #2 병합 후 RiskLimits 기본값도 T0 값으로 맞출 예정 — 지금 바꾸면 PR #2와 충돌)
+`RiskLimits()` 기본값 = T0 값(D-028). 단계가 바뀌면 `limits_for(stage)`가 일중 한도 등을 바꾼다.
 """
 
 from __future__ import annotations
@@ -24,26 +23,66 @@ STARTING_CAPITAL = 150_000
 SLOTS = 5   # 동시 보유 한도 → 주문 목표 = (시작 자금 + 실현 순손익) ÷ 5 = 30,000원
 
 
+AUTO_CAPITAL_FILE = "var/operating_capital.json"
+
+
+def _auto_requested() -> bool:
+    return os.environ.get("STOCKKING_OPERATING_CAPITAL", "").strip().lower() == "auto"
+
+
+def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today: str | None = None) -> int:
+    """D-046: 'auto' 이면 모의 1일차 시작 시점 주문 가능 금액 전액을 운용 금액으로 한 번 고정 저장.
+    이미 고정돼 있으면 그 값을 그대로 쓴다(5거래일 내내 같은 값)."""
+    import json
+    from datetime import date
+    from pathlib import Path
+    if resolve_stage() is not CapitalStage.PAPER:
+        raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
+    f = Path(path or os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+    if f.exists():
+        return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
+    if broker_orderable_cash <= 0:
+        raise ValueError("모의 주문 가능 금액이 0 이하라 운용 금액을 정할 수 없습니다")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"capital": int(broker_orderable_cash), "fixed_on": today or date.today().isoformat(),
+                             "source": "KIS 모의 D+2 예수금(주문 가능 금액 근사)", "decision": "D-046"},
+                            ensure_ascii=False, indent=2), encoding="utf-8")
+    return int(broker_orderable_cash)
+
+
 def operating_capital() -> int:
-    """운용 기준 자금. 기본 15만 원, STOCKKING_OPERATING_CAPITAL 로 변경(증액은 대표 승인 후)."""
-    value = int(os.environ.get("STOCKKING_OPERATING_CAPITAL", STARTING_CAPITAL))
+    """운용 기준 자금. 기본 15만 원(D-032, T0 실전 고정).
+    모의투자는 STOCKKING_OPERATING_CAPITAL 로 모의 계좌 예수금 이하 임의 금액(D-044), 또는 'auto'
+    (1일차 시작 시점 주문 가능 금액 전액을 고정, D-046)를 쓴다. 비중·손실 한도·1주 예외는 이 금액 기준 비율."""
+    raw = os.environ.get("STOCKKING_OPERATING_CAPITAL", "").replace(",", "").replace("_", "").strip()
+    if raw.lower() == "auto":
+        import json
+        from pathlib import Path
+        if resolve_stage() is not CapitalStage.PAPER:
+            raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
+        f = Path(os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+        if not f.exists():
+            raise RuntimeError("운용 금액 auto 가 아직 고정되지 않았습니다 — 먼저 connect_check 를 실행하세요(D-046)")
+        return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
+    value = int(raw) if raw else STARTING_CAPITAL
     if value <= 0:
         raise ValueError("STOCKKING_OPERATING_CAPITAL 은 양수여야 합니다")
+    if resolve_stage() is not CapitalStage.PAPER and value != STARTING_CAPITAL:
+        raise ValueError("실전 T0 운용 금액은 15만 원 고정(D-031·D-032) — 증액은 대표 승인 후 코드로")
     return value
 
 
-def capital_warning(broker_equity: int, capital: int | None = None) -> str | None:
-    """증권사 계좌 평가금이 운용 기준 자금과 크게 다르면 경고.
-
-    KIS 모의 계좌는 기본 예수금이 운용 기준(15만 원)보다 훨씬 클 수 있다. 그러면 비중·손실 한도가
-    계좌 전체 기준으로 계산돼 실전(15만 원)과 달라진다 → 모의 계좌 투자금을 15만 원 근처로 맞추거나,
-    S02 실행기에서 운용 기준 자금으로 장부를 따로 관리해야 한다.
-    """
+def capital_error(broker_cash: int, capital: int | None = None) -> str | None:
+    """D-044: 운용 금액이 모의 계좌 예수금보다 크면 오류. 작거나 같으면 정상(경고 없음)."""
     capital = capital or operating_capital()
-    if broker_equity > capital * 1.2 or broker_equity < capital * 0.8:
-        return (f"증권사 평가금 {broker_equity:,}원 ≠ 운용 기준 {capital:,}원 — 한도가 실전과 다르게 계산됩니다 "
-                "(PAPER_RUNBOOK §0 참고)")
+    if capital > broker_cash:
+        return (f"운용 금액 {capital:,}원 > 모의 계좌 예수금 {broker_cash:,}원 — "
+                "STOCKKING_OPERATING_CAPITAL 을 예수금 이하로 낮추세요(D-044)")
     return None
+
+
+def capital_warning(broker_equity: int, capital: int | None = None) -> str | None:  # 하위 호환
+    return capital_error(broker_equity, capital)
 
 
 # D-028 확정값
@@ -52,9 +91,9 @@ WEEKLY_LOSS = 0.08
 FINAL_STOP_FROM_PRINCIPAL = 0.20       # 원금 −20% → 전량 청산·시스템 정지 (D-016)
 PEAK_DRAWDOWN_DERISK = 0.15            # 최고점 −15% → 매매 규모 50% 축소 (D-016)
 DERISK_MULTIPLIER = 0.5
-MAX_TRADE_LOSS_PCT = 0.02              # 매매 1건 최대 손실 (D-028) — 손절가 필드 추가 후 관문 검사(PR #2 병합 후)
+MAX_TRADE_LOSS_PCT = 0.02              # 매매 1건 최대 손실 (D-028) — 관문 TRADE_LOSS 검사
 
-# D-025 1주 예외 한도 — D-021 구현 PR(PR #2 병합 후)에서 사용. 15만 원 기준 1주 가격 상한 45,000원(D-032)
+# D-025 1주 예외 한도 — 관문 _check_d005 와 d005_sizer 에서 사용. 15만 원 기준 1주 가격 상한 45,000원(D-032)
 ONE_SHARE_EXCEPTION_MAX_PRICE_PCT = 0.30
 ONE_SHARE_EXCEPTION_MAX_CONCURRENT = 1
 ONE_SHARE_EXCEPTION_MAX_LOSS_PCT = 0.02
@@ -75,6 +114,9 @@ def limits_for(stage: CapitalStage, base: RiskLimits | None = None) -> RiskLimit
         max_weekly_loss_pct=WEEKLY_LOSS,
         max_monthly_loss_pct=None,       # D-028에 월간 한도 없음 → 검사 안 함
         final_stop_pct=FINAL_STOP_FROM_PRINCIPAL,
+        max_trade_loss_pct=MAX_TRADE_LOSS_PCT,
+        one_share_max_price_pct=ONE_SHARE_EXCEPTION_MAX_PRICE_PCT,
+        one_share_max_concurrent_over=ONE_SHARE_EXCEPTION_MAX_CONCURRENT,
     )
 
 

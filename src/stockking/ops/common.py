@@ -37,3 +37,21 @@ class Checklist:
 def die(msg: str) -> None:
     print(f"중단: {msg}", file=sys.stderr)
     raise SystemExit(2)
+
+
+def run_cli(main) -> int:
+    """운영 명령 공통 실행: 예상된 오류(토큰 제한·키 없음·한도 초과 등)는 traceback 대신 한글 안내 후 종료코드 2."""
+    try:
+        return main()
+    except KeyboardInterrupt:
+        print("\n중단: 사용자가 Ctrl+C 로 멈췄습니다. 재시작 전에 'python -m stockking.ops.startup_check' 를 실행하세요.",
+              file=sys.stderr)
+        return 130
+    except (RuntimeError, PermissionError, ValueError, OSError) as e:
+        print(f"\n중단: {e}", file=sys.stderr)
+        msg = str(e)
+        if "1분" in msg or "EGW00133" in msg or "403" in msg:
+            print("  → 토큰 발급 제한입니다. 1분 기다렸다 같은 명령을 다시 실행하세요.", file=sys.stderr)
+        elif "비밀값" in msg:
+            print("  → 비밀값 파일을 확인하세요: notepad \"$env:APPDATA\\stockking\\secrets.env\"", file=sys.stderr)
+        return 2

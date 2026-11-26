@@ -87,3 +87,75 @@
 - S02 v1.0(bcad9b6) 대조: 신호 규칙(§1~§8)은 v0.1과 같아 `s02.py` 로직 변경 없음(버전 표기만 갱신). §10 15만 원 사이징은 `strategy/d005_sizer.py` + v1.0 예제 3건 테스트(PR #2 `sizing.py` 필요 → 병합 전 자동 건너뜀, PR #2와 합친 상태에서 통과 확인)
 - D-035: `US_DAYTRADING_COST_VALIDATION.md` 초안 — 비용 실측 항목·절차, 별도 검증 구간, 비용 시나리오 S0~S4·손익분기, 판정 제안, 재현 절차
 - `.gitattributes`(INBOX.md merge=union) — 총괄 d8dee39와 동일 내용
+
+## 2026-11-24 — PR #2 병합(4d7c493) 후 미뤄 둔 작업 + D-036
+
+| 항목 | 반영 |
+|---|---|
+| RiskLimits 기본값 T0 교체 | 일 −5%, 주 −8%, 월 없음, 1건 손실 2%, 최종 손절 −20% (D-028) |
+| 1건 손실 2% (D-028) | `OrderRequest.stop_price` 추가, 관문 TRADE_LOSS·BAD_STOP·NO_STOP 검사 (`require_stop_for_buy` 로 손절가 필수화 가능) |
+| D-021/D-025/D-036 관문 검사 | `order_target`·`sizing_exception` 필드, 관문 `_check_d005`: 90~110% 밴드, 1주 예외 종류 재계산(UNDER/OVER), 1주 가격 ≤ 30%, '목표 초과' 동시 1개('목표 미달' 제외), 예외는 손절가 필수 |
+| D-025 vs 비중 22% 충돌 | 22% 한도가 '목표 초과' 예외(가격 22~30%)를 전부 막던 문제 발견 → 1주 예외 신규 진입은 비중 한도 30% 적용, 추가 매수는 22% 유지 |
+| D-036 사이저 | `d005_sizer`: ONE_SHARE_UNDER / ONE_SHARE_OVER, 동시 1개 한도는 OVER 만 |
+| 미국 비용 필드 | `CostModel.sec_fee_rate`, `finra_taf_per_share`, `finra_taf_max`, `us_from_usd()`, 백테스트·로컬 모의 매도에 `sell_charges()` 적용 |
+| 테스트 | 147개 통과 |
+
+다음: S02 주문 실행기(주문계획 → 관문 → KIS 제출, 15:15 LDAY 잔량 취소), C2 신호 일치 비교, 미국 장부 필드(환율·SEC/TAF), 결제일 기준 연도별 거래세표(회계팀 요청).
+
+## 2026-11-24 — S02 주문 실행기 (C2·C6)
+
+- `ops/s02_runner.py`: plan(18:30, D-005 사이저·국내만 D-033) → submit(08:40, 청산 먼저·관문·손절가 필수·청산 MOO 허용) → cancel(15:15 LDAY 잔량) → sync(체결 → 15만 원 가상 장부, 중복 반영 방지) → verify(C2: 같은 입력 재계산 = 제출 기록)
+- 가상 장부(var/s02/state.json, 원자적 저장): 모의 계좌 금액과 무관하게 15만 원 기준으로 사이징·한도 계산 (D-032 위험 해소)
+- 모의 전용: PAPER 모드·모의 브로커가 아니면 submit/cancel 거부
+- paper_report: C2 자동 판정 연결 → C1~C6 모두 자동 판정 가능
+- D-025 해석(리스크실 확정) docs/DECISIONS.md 기록, main(4f10468) 병합 반영
+- 테스트 156개 통과
+- 외부 의존: 자료팀 입력 파일 4종(PAPER_RUNBOOK §3-1)
+
+## 2026-11-25 — 시장가 규칙 (리스크관리실 결정)
+
+- 관문: 시장가는 국내 청산 매도 + 사유 코드(X_STOP/X_TP/X_TIME/X_ADMIN/X_KILL, D-027 T2용 X_TECH)만, 수량 ≤ 보유. 국내 매수·미국은 지정가만
+- `OrderRequest.exit_reason` 추가, S02 실행기·T2가 사유 코드 전달
+- KIS 모의 시장가 미지원 대비: `STOCKKING_KR_SELL_MODE=marketable_limit` → 기준가×0.98 호가 올림 지정가 (`krx.ceil_to_tick`, `marketable_sell_limit`)
+- 테스트 169개 통과
+
+## 2026-11-25 — Codex 검토 버그 수정 + 윈도우 실행 환경
+
+- Codex #1·#2 수정(1e98c90): 제출 시 미체결 매수 현금·슬롯 예약, 재시작 후 재제출 방지, 부분체결 누적 반영. 경계 사례(110% 주문 비중 22% 초과) 리스크실 판단 요청
+- 윈도우: `scripts/setup_windows.ps1`(Python·git 확인, .venv, 설치, 테스트, `%APPDATA%\stockking\secrets.env` 자리·본인만 읽기 권한, 오프라인 훈련, 한글 요약), `scripts/paper_day.ps1 -Step check|open|drill|cancel|close|plan`
+- 비밀값: 윈도우 기본 경로 `%APPDATA%\stockking\secrets.env`, OneDrive 폴더 거부, 메모장 BOM 허용
+- `data/` gitignore (유료·약관 제한 데이터 커밋 방지)
+- ⚠ .ps1 은 개발 환경에 PowerShell 이 없어 미실행 — 대표 PC 첫 실행으로 검증 필요
+
+## 2026-11-25 — D-042 대응 (모의 11/26 시작)
+
+- 리스크실 비중 22.1% 허용오차, 매매팀 I1(실현 순손익에 매수 수수료) 반영 — 335a7d4, 177 passed
+- `WINDOWS_QUICKSTART.md`: 대표 PC 최소 설치(Python·Git·clone·브랜치·venv·pip·pytest·비밀값 파일·첫 연결 점검, 단계별 '정상 화면')와 1일차 기술 점검 시간표 한 장
+
+## 2026-11-26 — D-043·D-044, 리스크실 허용오차 확정
+
+- 비중 허용오차 0.1%p: 일반 22.1%, 1주 예외 신규 진입 30.1% (수수료는 계산에 그대로) — 테스트: 22.1% 통과·22.2% 거부, 33,000원 4건 수수료 반영 후 통과
+- D-044: `STOCKKING_OPERATING_CAPITAL` 로 모의 운용 금액 자유 설정(쉼표 허용), 미설정 15만 원, 실전 T0는 15만 원 외 값 거부. 운용 금액 > 모의 예수금이면 connect_check 3-1 FAIL·tech_orders/s02 submit 중단(이하이면 경고 없음)
+- D-043: 5거래일 일정, D-027 판정 4일차(12/1)·실행 5일차(12/2) 문서 반영. `paper_day.ps1 -OperatingCapital`
+- 179 passed
+
+## 2026-11-26 — D-045·D-046
+
+- D-045: 모의 장부 수수료 추정 = `CostModel.kr_v024()` (국내 0.15%, 매도세 0.20%, source "COST_MODEL v0.2.4")
+- D-046: `STOCKKING_OPERATING_CAPITAL=auto` — 1일차 첫 `ledger_close --open`/`connect_check` 때 D+2 예수금(주문 가능 금액 근사)을 `var/operating_capital.json` 에 고정, 5거래일 동일 사용, 장부 open_state 에 principal 기록. 실전 T0 auto 거부. `paper_day.ps1` 기본 auto, WINDOWS_QUICKSTART 매일 시작 명령에 포함
+- 미결: 주문 가능 금액을 D+2 예수금으로 근사 — KIS 매수가능조회(VTTC8908R) 값과 다르면 1일차 실측 후 교체
+- 181 passed
+
+## 2026-11-26 — 1일차 실측 대응 (대표 PC)
+
+- 테스트 격리: conftest 가 모든 테스트를 tmp 폴더에서 실행, 운용 금액·모드·KIS 키 환경변수 제거, 비밀값·토큰 캐시·%APPDATA%·HOME 을 tmp 로 → 대표 PC 실제 `var/operating_capital.json`·`secrets.env`·`auto` 설정에 영향받지 않음(재현 확인)
+- 토큰 파일 캐시: 유효기간까지 `%APPDATA%\stockking\kis_paper_token.json`(본인만 읽기, 앱키 지문 일치·만료 60초 전까지만 사용) 재사용 → 1분 내 재실행 403 해소. 403/EGW00133 은 '1분 후 재시도' 안내, HTTP 오류 본문 보존
+- 187 passed
+
+## 2026-11-26 — 1일차 실측 대응 2 (주문내역 0건, traceback)
+
+- 주문내역 조회: TR·파라미터 변형(VTTC0081R/VTTC8001R × EXCG_ID_DVSN_CD=KRX 유무) 순차 시도, 성공 변형 기억, 모두 오류면 명확한 오류. 취소 판정에 cncl_cfrm_qty 추가, orgn_odno 수집
+- connect_check 6단계: 최대 5회 2초 간격 재조회, 실패 시 진단 안내. daily_reconcile: 시스템 접수 있는데 조회 0건이면 FAIL로 표시(대사 오판 방지)
+- 진단: STOCKKING_KIS_DEBUG=1 → var/logs/kis_raw_날짜.jsonl (계좌·키·토큰 마스킹, 토큰 발급 응답 미기록)
+- 운영 명령 전체 run_cli: 예상 오류는 traceback 없이 '중단: …' + 조치 안내, 종료코드 2 (Ctrl+C 130)
+- 191 passed. ⚠ 어떤 변형이 맞는지는 대표 PC 실측(진단 로그)으로 확정 필요

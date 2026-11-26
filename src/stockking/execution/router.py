@@ -37,6 +37,13 @@ class OrderRouter:
     def submit(self, order: OrderRequest, account: AccountSnapshot,
                reference_price: int | None = None) -> RoutedOrder:
         self._journal.write("order_request", mode=self.mode, order=order)
+        # D-027 점검용 주문(T_TECH / X_TECH)은 실계좌 승인 이후에도 모의투자에서만 (리스크관리실 2026-11-25)
+        if (order.strategy_id == "T_TECH" or order.exit_reason == "X_TECH") and not (
+                self.mode is TradingMode.PAPER and getattr(self._broker, "is_paper", False) is True):
+            decision = RiskDecision(False, ("TECH_ORDER_PAPER_ONLY: 점검용 주문은 모의투자 전용",))
+            self._journal.write("risk_decision", client_order_id=order.client_order_id, approved=False,
+                                reasons=list(decision.reasons))
+            return RoutedOrder(order, OrderStatus.REJECTED_BY_RISK, decision, message=decision.reasons[0])
         decision = self._gate.check(order, account, reference_price)
         self._journal.write("risk_decision", client_order_id=order.client_order_id,
                             approved=decision.approved, reasons=list(decision.reasons))

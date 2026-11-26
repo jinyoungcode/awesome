@@ -24,22 +24,33 @@ from ..market import Market, market_of
 
 @dataclass(frozen=True)
 class RiskLimits:
-    """[임시값] 리스크관리실 정책 확정 시 교체. 비율은 0~1."""
+    """기본값 = T0(15만 원 실전 테스트) 확정값(D-028). 단계별 값은 risk/stages.py limits_for(). 비율은 0~1."""
 
-    max_daily_loss_pct: float = 0.02        # 당일 시작 평가금 대비 -2% 도달 시 신규 매수 중단 + 킬스위치
-    max_weekly_loss_pct: float = 0.04
-    max_monthly_loss_pct: float = 0.08
+    max_daily_loss_pct: float = 0.05        # D-028 T0 일중 −5% → 킬스위치 (T1~ −3%는 limits_for)
+    max_weekly_loss_pct: float = 0.08       # D-028
+    max_monthly_loss_pct: float | None = None  # D-028에 월간 한도 없음
     # 1종목 최대 비중(주문 후 기준). D-005: 주문 목표(자산÷5=20%)의 +10%까지 허용하므로 22%.
     max_position_weight: float = 0.22
+    # 리스크관리실(2026-11-25): 수수료로 평가금이 줄어 목표 110%(=22%) 주문이 22.0x%가 되는 경계 → 22.1%까지 허용
+    position_weight_tolerance: float = 0.001
     max_open_positions: int = 5             # 최대 동시 보유 종목 수
     max_order_value: int = 2_000_000        # 1회 주문 최대 금액(원)
     max_orders_per_minute: int = 10         # 폭주 방지(무한루프 주문 차단)
     price_band_pct: float = 0.30            # 국내: 기준가 대비 ±30%(가격제한폭) 밖 지정가 거부
     us_price_band_pct: float | None = None  # 미국: 가격제한폭 없음 → 기본 검사 생략(값을 주면 적용)
-    allow_market_orders: bool = False       # 시장가 기본 금지(모의투자 일부 미지원·슬리피지)
+    # 시장가 총 스위치. 켜도 '국내 청산 매도 + 청산 사유 코드'만 허용 (리스크관리실 결정, 2026-11-24)
+    allow_market_orders: bool = False
+    market_sell_exit_reasons: tuple[str, ...] = ("X_STOP", "X_TP", "X_TIME", "X_ADMIN", "X_KILL", "X_TECH")
     kill_on_daily_loss: bool = True
     # D-016/D-028: 원금 대비 이 비율 손실 시 최종 손절(킬스위치). None = 검사 안 함
     final_stop_pct: float | None = 0.20
+    # D-028: 매매 1건 최대 손실(손절가까지) ≤ 총자산 2%. stop_price 가 있는 매수 주문에 적용
+    max_trade_loss_pct: float = 0.02
+    require_stop_for_buy: bool = False      # True 면 손절가 없는 매수 거부 (전략 실행기는 True 로 운용)
+    # D-005/D-021/D-025/D-036: order_target 이 있는 매수에 적용
+    d005_band: tuple[float, float] = (0.90, 1.10)
+    one_share_max_price_pct: float = 0.30
+    one_share_max_concurrent_over: int = 1
 
 
 @dataclass(frozen=True)
@@ -147,9 +158,16 @@ class RiskGate:
         if len(self._recent_orders) >= L.max_orders_per_minute:
             reasons.append(f"ORDER_RATE: 분당 {L.max_orders_per_minute}건 초과")
 
-        # 3. 주문 유형
-        if order.order_type is OrderType.MARKET and not L.allow_market_orders:
-            reasons.append("MARKET_ORDER_NOT_ALLOWED")
+        # 3. 주문 유형 — 시장가는 국내 청산 매도만(사유 코드 필수). 국내 매수·미국은 지정가만
+        if order.order_type is OrderType.MARKET:
+            if not L.allow_market_orders:
+                reasons.append("MARKET_ORDER_NOT_ALLOWED")
+            elif order.side is Side.BUY:
+                reasons.append("MARKET_BUY_NOT_ALLOWED: 매수는 지정가만")
+            elif market_of(order.symbol) is not Market.KR:
+                reasons.append("MARKET_US_NOT_ALLOWED: 미국은 지정가만")
+            elif order.exit_reason not in L.market_sell_exit_reasons:
+                reasons.append(f"MARKET_SELL_NO_EXIT_REASON: 청산 사유 코드 필요 (받은 값 {order.exit_reason!r})")
 
         # 4. 가격 — 기준가 없으면 거부(fail-closed)
         price = order.limit_price if order.order_type is OrderType.LIMIT else account.prices.get(order.symbol)
@@ -194,6 +212,20 @@ class RiskGate:
                     reasons.append(f"{name}_LOSS_LIMIT: {drawdown:.2%} >= {limit:.2%}")
 
         if order.side is Side.BUY:
+            # 5-1. 1건 손실 한도 (D-028)
+            if order.stop_price is None:
+                if L.require_stop_for_buy or order.sizing_exception:
+                    reasons.append("NO_STOP: 손절가 없는 매수")
+            elif order.stop_price >= price:
+                reasons.append(f"BAD_STOP: 손절가 {order.stop_price} ≥ 매수가 {price}")
+            elif (price - order.stop_price) * order.quantity > equity * L.max_trade_loss_pct:
+                reasons.append(f"TRADE_LOSS: 손절까지 {(price - order.stop_price) * order.quantity:,.0f}원 > "
+                               f"총자산 {L.max_trade_loss_pct:.0%}")
+            # 5-2. D-005 주문 크기·1주 예외 (D-021/D-025/D-036)
+            if order.order_target:
+                reasons += self._check_d005(order, account, price, equity)
+            elif order.sizing_exception:
+                reasons.append("EXCEPTION_WITHOUT_TARGET: 1주 예외에는 order_target 필요")
             # 6. 1회 주문 금액
             if order_value > L.max_order_value:
                 reasons.append(f"ORDER_VALUE: {order_value:,}원 > {L.max_order_value:,}원")
@@ -204,8 +236,12 @@ class RiskGate:
             held = account.positions.get(order.symbol)
             held_value = held.quantity * ref if held else 0
             weight_after = (held_value + order_value) / equity
-            if weight_after > L.max_position_weight:
-                reasons.append(f"POSITION_WEIGHT: 주문 후 {weight_after:.1%} > {L.max_position_weight:.0%}")
+            # D-025: 1주 예외(신규 진입 1주)는 '1주 가격 ≤ 총자산 30%'가 비중 한도를 대신한다. 그 외 22%(D-005)
+            # 리스크관리실: 허용오차 0.1%p — 일반 22.1%, 1주 예외 신규 진입 30.1% (수수료는 계산에서 빼지 않음)
+            cap = (L.one_share_max_price_pct if order.sizing_exception and order.order_target and not held
+                   else L.max_position_weight) + L.position_weight_tolerance
+            if weight_after > cap:
+                reasons.append(f"POSITION_WEIGHT: 주문 후 {weight_after:.1%} > {cap:.0%}")
             # 9. 동시 보유 종목 수
             open_symbols = {s for s, p in account.positions.items() if p.quantity > 0}
             if order.symbol not in open_symbols and len(open_symbols) >= L.max_open_positions:
@@ -226,3 +262,24 @@ class RiskGate:
     def preload_order_ids(self, order_ids) -> None:
         """재시작 복구: 감사 로그에 남은 주문번호를 다시 등록해 같은 번호의 재전송을 막는다."""
         self._seen_order_ids.update(order_ids)
+
+    def _check_d005(self, order: OrderRequest, account: AccountSnapshot, price: int, equity: int) -> list[str]:
+        from ..sizing import shares_for_target, within_band
+
+        L, target, value = self.limits, order.order_target, price * order.quantity
+        if not order.sizing_exception:
+            return [] if within_band(value, target, L.d005_band) else [
+                f"D005_BAND: 주문 {value:,}원이 목표 {target:,}원의 90~110% 밖"]
+        out = []
+        if order.quantity != 1:
+            out.append("ONE_SHARE_QTY: 1주 예외는 1주만")
+        if shares_for_target(price, target, L.d005_band) is not None:
+            out.append("ONE_SHARE_NOT_NEEDED: 정수 수량으로 목표 범위를 맞출 수 있음")
+        kind = "ONE_SHARE_UNDER" if value * 100 < target * round(L.d005_band[0] * 100) else "ONE_SHARE_OVER"
+        if order.sizing_exception != kind:
+            out.append(f"EXCEPTION_KIND: 표시 {order.sizing_exception} ≠ 계산 {kind}")
+        if price > equity * L.one_share_max_price_pct:
+            out.append(f"ONE_SHARE_PRICE: 1주 {price:,}원 > 총자산 {L.one_share_max_price_pct:.0%}")
+        if kind == "ONE_SHARE_OVER" and len(account.over_exception_symbols - {order.symbol}) >= L.one_share_max_concurrent_over:
+            out.append("ONE_SHARE_CONCURRENT: '목표 초과' 1주 예외 종목 이미 보유")
+        return out

@@ -21,17 +21,40 @@ from .kis_session import add_key_args, make_client
 from .recovery import scan_journal
 
 
-def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
+def compare(journal_accepted: dict[str, str], broker_rows: list[dict], cancel_odnos: set[str] | None = None) -> dict:
     norm = lambda x: (x or "").lstrip("0")  # noqa: E731
     ours = {norm(odno): cid for cid, odno in journal_accepted.items() if odno}
     theirs = {norm(r["odno"]): r for r in broker_rows}
     dup_odno = [o for o, n in Counter(norm(v) for v in journal_accepted.values() if v).items() if n > 1]
+    # KIS 는 취소·정정 주문을 별도 주문번호(odno)로 내역에 남기고 orgn_odno 에 원주문번호를 둔다.
+    # 원주문(또는 그 취소·정정 사슬)이 시스템 주문이면 수동 주문이 아니라 시스템 주문의 취소·정정이다.
+    known, linked = set(ours), set()
+    # 보조: orgn_odno 가 비어 와도 감사 로그에 남긴 시스템 취소주문번호(cancel_odno)는 시스템 취소로 본다
+    for c in cancel_odnos or ():
+        if norm(c) in theirs and norm(c) not in known:
+            known.add(norm(c))
+            linked.add(norm(c))
+    changed = True
+    while changed:
+        changed = False
+        for o, r in theirs.items():
+            if o not in known and norm(r.get("orgn_odno")) in known:
+                known.add(o)
+                linked.add(o)
+                changed = True
     return {
         "matched": sorted(set(ours) & set(theirs)),
         "missing_at_broker": sorted(set(ours) - set(theirs)),   # 시스템은 접수됐다는데 증권사에 없음
-        "unknown_to_system": sorted(set(theirs) - set(ours)),   # 수동 주문 또는 기록 누락
+        "linked_cancel_modify": sorted(linked),                 # 시스템 주문의 취소·정정 주문
+        "unknown_to_system": sorted(set(theirs) - known),       # 수동 주문 또는 기록 누락
         "duplicate_broker_ids": dup_odno,
     }
+
+
+def cancel_order_ids(records: list[dict]) -> set[str]:
+    """감사 로그의 취소 응답에서 증권사 취소주문번호(cancel_odno)."""
+    return {str(r["cancel_odno"]) for r in records
+            if r.get("event") in ("cancel_response", "s02_cancel", "tech_order") and r.get("cancel_odno")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,9 +66,20 @@ def main(argv: list[str] | None = None) -> int:
     kis = make_client(a)
     rows, bal = kis.inquire_daily_orders(a.date), kis.inquire_balance()
     rep = scan_journal(journal_path(day))
-    diff = compare(rep.accepted, rows)
+    records = []
+    if journal_path(day).exists():
+        for line in journal_path(day).read_text(encoding="utf-8").splitlines():
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    diff = compare(rep.accepted, rows, cancel_order_ids(records))
 
     cl = Checklist(f"일일 대사 {a.date}")
+    if not rows and rep.accepted:
+        cl.check("증권사 주문내역 조회 결과 있음", False,
+                 f"시스템 접수 {len(rep.accepted)}건인데 조회 0건 — 조회 문제 가능. "
+                 "$env:STOCKKING_KIS_DEBUG='1' 로 다시 실행해 var/logs/kis_raw_날짜.jsonl 을 프로그램팀에 전달")
     cl.check("시스템 접수 주문이 증권사 내역과 일치", not diff["missing_at_broker"], f"불일치 {diff['missing_at_broker']}")
     # D-029/D-030: 전용 계좌에서 수동 매매는 원칙적으로 없어야 함. 감지되면 별도 집계 대상으로 표시하고 미통과 처리
     cl.check("시스템이 모르는 주문 없음 (있으면 수동 매매로 분리 집계, D-029)", not diff["unknown_to_system"],
@@ -63,4 +97,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from .common import run_cli
+    raise SystemExit(run_cli(main))

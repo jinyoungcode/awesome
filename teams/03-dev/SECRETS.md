@@ -8,7 +8,7 @@
 |---|---|
 | 토큰 발급 `POST /oauth2/tokenP` | **JSON 본문**에 `appkey`, `appsecret` |
 | 이후 모든 호출 | **헤더** `appkey`, `appsecret` + `authorization: Bearer <토큰>` |
-| 토큰 | 약 24시간 유효, 재발급 빈도 제한 → 메모리에만 보관(디스크 저장 안 함) |
+| 토큰 | 약 24시간 유효, 재발급 빈도 제한(1분 1회) → 메모리 + **저장소 밖 캐시 파일**(`%APPDATA%\stockking\kis_paper_token.json`, 본인만 읽기, 앱키 지문만 저장·키 자체는 미저장) |
 
 키가 본문과 비표준 헤더 두 곳에 모두 들어갑니다. 그래서 "프록시가 헤더 하나에 키를 넣어 주는" 방식으로는 처리할 수 없습니다.
 
@@ -45,8 +45,12 @@ KIS_PAPER_ACCOUNT_NO=모의계좌앞8자리
 KIS_PAPER_ACCOUNT_PRODUCT=01
 ```
 
-### 설정 방법 (윈도우)
-`%USERPROFILE%\.config\stockking\secrets.env`에 같은 4줄을 저장합니다. 윈도우에서는 코드가 파일 권한을 검사하지 못하므로, 탐색기에서 **속성 → 보안**을 열어 본인 계정만 읽을 수 있게 설정해 주세요.
+### 설정 방법 (윈도우 — 대표 PC)
+- 위치: **`%APPDATA%\stockking\secrets.env`** (예: `C:\Users\<사용자>\AppData\Roaming\stockking\secrets.env`). 코드의 윈도우 기본 경로입니다.
+- `scripts\setup_windows.ps1` 이 이 파일을 **값 없이** 만들고, 권한을 **본인 계정만 읽기·쓰기**(icacls, 상속 제거)로 설정합니다. 기존 파일은 덮어쓰지 않습니다.
+- `notepad "$env:APPDATA\stockking\secrets.env"` 로 열어 `=` 뒤에 값을 넣고 저장합니다(메모장 BOM 저장도 읽힘).
+- 코드가 거부하는 위치: 저장소 폴더 안, **OneDrive 동기화 폴더 안**(키가 클라우드로 복제되는 것 방지).
+- 다른 경로를 쓰려면 환경변수 `STOCKKING_SECRETS_FILE` 로 지정합니다.
 
 ## 4. 절대 하지 말 것
 - 키를 채팅, 저장소, 이슈/PR, 스크린샷, 메신저에 올리기

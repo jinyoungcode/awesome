@@ -20,7 +20,7 @@ from ..domain import AccountSnapshot, OrderRequest, OrderStatus, OrderType, Posi
 from ..execution import OrderRouter
 from ..krx import floor_to_tick
 from ..risk import KillSwitch, RiskGate
-from ..risk.stages import capital_warning
+from ..risk.stages import capital_error
 from .common import Checklist, journal_path
 from .kis_session import add_key_args, make_client
 
@@ -58,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         bal = kis.inquire_balance()
         cl.check("3. 잔고 조회", True, f"예수금 {bal['cash']:,}원, 보유 {len(bal['positions'])}종목")
+        from ..risk.stages import _auto_requested, fix_auto_capital, operating_capital
+        orderable = bal["cash_d2"] or bal["cash"]
+        if _auto_requested():
+            print(f"  운용 금액 auto(D-046): {fix_auto_capital(orderable):,}원으로 고정 (var/operating_capital.json)")
+        err = capital_error(orderable)
+        cl.check("3-1. 운용 금액 ≤ 모의 예수금 (D-044)", err is None, err or f"운용 금액 {operating_capital():,}원")
     except Exception as e:  # noqa: BLE001
         cl.check("3. 잔고 조회", False, str(e))
         return cl.finish()
@@ -72,8 +78,6 @@ def main(argv: list[str] | None = None) -> int:
     limit = floor_to_tick(int(q["price"] * 0.90))
     positions = {s: Position(s, qty, avg) for s, (qty, avg) in bal["positions"].items()}
     equity = bal["total_equity"] or bal["cash"]
-    if (w := capital_warning(equity)):
-        print(f"  ※ 경고: {w}")
     snap = AccountSnapshot(bal["cash"], positions, {a.symbol: q["price"]}, equity)
     router = OrderRouter(kis, RiskGate(kill_switch=KillSwitch()), Journal(journal_path()), TradingMode.PAPER)
     order = OrderRequest(a.symbol, Side.BUY, 1, OrderType.LIMIT, limit, "connect_check")
@@ -86,12 +90,22 @@ def main(argv: list[str] | None = None) -> int:
     time.sleep(1)
     c = kis.cancel_order(routed.broker_order_id, a.symbol, 1, krx_org_no=org_no)
     Journal(journal_path()).write("cancel_response", client_order_id=order.client_order_id,
-                                  broker_order_id=routed.broker_order_id, accepted=c.accepted, message=c.message)
+                                  broker_order_id=routed.broker_order_id, cancel_odno=c.broker_order_id,
+                                  accepted=c.accepted, message=c.message)
     cl.check("5. 주문 취소", c.accepted, c.message)
 
-    time.sleep(1)
-    rows = kis.inquire_daily_orders(datetime.now(KST).strftime("%Y%m%d"))
-    mine = [r for r in rows if r["odno"].lstrip("0") == (routed.broker_order_id or "").lstrip("0")]
+    # 모의 서버 반영 지연 대비: 최대 5회, 2초 간격 재조회 (1일차 실측 '내역 없음' 대응)
+    target_id = (routed.broker_order_id or "").lstrip("0")
+    mine, rows = [], []
+    for attempt in range(5):
+        time.sleep(2 if attempt else 1)
+        rows = kis.inquire_daily_orders(datetime.now(KST).strftime("%Y%m%d"))
+        mine = [r for r in rows if r["odno"].lstrip("0") == target_id or r.get("orgn_odno", "").lstrip("0") == target_id]
+        if mine:
+            break
+    if not mine:
+        print(f"  ※ 주문내역 {len(rows)}건 중 주문번호 {routed.broker_order_id} 없음. 원문 확인: "
+              "$env:STOCKKING_KIS_DEBUG='1' 후 다시 실행 → var\\logs\\kis_raw_날짜.jsonl")
     cl.check("6. 주문내역에서 확인", bool(mine), f"{mine[0] if mine else '내역 없음'}")
     if mine and mine[0]["filled_qty"]:
         print("  ※ 일부/전량 체결됨 — 모의 계좌라 손실 영향 없음, 대사 시 반영")
@@ -99,4 +113,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    from .common import run_cli
+    raise SystemExit(run_cli(main))

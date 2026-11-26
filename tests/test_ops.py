@@ -85,6 +85,19 @@ def test_reconcile_compare():
     assert d["duplicate_broker_ids"] == ["2"] and d["missing_at_broker"] == []
 
 
+def test_reconcile_cancel_of_system_order_is_not_manual():
+    # 1일차 실측(11/26): 25951 매수 → 취소 주문 25953(orgn_odno=25951) 이 별도 행으로 조회됨
+    rows = [{"odno": "0000025953", "orgn_odno": "0000025951"},
+            {"odno": "0000025951", "orgn_odno": "0000000000"},
+            {"odno": "0000025960", "orgn_odno": "0000025953"},   # 정정의 정정(사슬)
+            {"odno": "0000025970", "orgn_odno": "0000000000"},   # 진짜 수동 주문
+            {"odno": "0000025971", "orgn_odno": "0000025970"}]   # 수동 주문의 취소도 수동
+    d = compare({"SK-1": "0000025951"}, rows)
+    assert d["matched"] == ["25951"]
+    assert d["linked_cancel_modify"] == ["25953", "25960"]
+    assert d["unknown_to_system"] == ["25970", "25971"]
+
+
 # ---------- 호가단위·장시간 ----------
 @pytest.mark.parametrize("price,tick", [(1_999, 1), (4_995, 5), (19_990, 10), (49_950, 50),
                                         (199_900, 100), (499_500, 500), (500_000, 1_000)])
@@ -192,3 +205,30 @@ def test_kis_daily_orders_parsing():
     assert {k: r[k] for k in ("odno", "symbol", "side", "ord_qty", "filled_qty", "avg_price", "canceled")} == {
         "odno": "0000123", "symbol": "005930", "side": "buy", "ord_qty": 1, "filled_qty": 0, "avg_price": 0.0,
         "canceled": True}
+
+
+def test_secret_file_rejects_onedrive(tmp_path, monkeypatch):
+    od = tmp_path / "OneDrive"
+    (od / "stockking").mkdir(parents=True)
+    f = od / "stockking" / "secrets.env"
+    f.write_text("K=v\n")
+    f.chmod(0o600)
+    monkeypatch.setenv("OneDrive", str(od))
+    with pytest.raises(InsecureSecretFile, match="OneDrive"):
+        load_secret_file(f)
+
+
+def test_windows_default_secret_path(monkeypatch):
+    monkeypatch.setenv("APPDATA", "/fake/AppData/Roaming")
+    assert config.default_secrets_file(is_windows=True) == Path("/fake/AppData/Roaming/stockking/secrets.env")
+    assert config.default_secrets_file(is_windows=False).parts[-3:] == (".config", "stockking", "secrets.env")
+
+
+def test_reconcile_cancel_odno_fallback_and_chain():
+    """orgn_odno 가 비어 온 취소 행은 감사 로그 cancel_odno 로 매칭, 정정의 정정(사슬)도 시스템 것."""
+    from stockking.ops.daily_reconcile import cancel_order_ids
+    rows = [{"odno": "0000025951", "orgn_odno": ""}, {"odno": "0000025953", "orgn_odno": ""},
+            {"odno": "0000025960", "orgn_odno": "0000025953"}]
+    d = compare({"SK-1": "0000025951"}, rows, cancel_order_ids([{"event": "cancel_response", "cancel_odno": "0000025953"}]))
+    assert d["linked_cancel_modify"] == ["25953", "25960"] and d["unknown_to_system"] == []
+    assert compare({"SK-1": "0000025951"}, rows)["unknown_to_system"] == ["25953", "25960"]   # 보조 정보 없으면 수동 취급
