@@ -15,7 +15,7 @@
 ## 모의 준비·일정 — 7회차 (2026-11-25~26)
 - S02 명세 ↔ 실행기 대조 완료 → [S02_IMPL_CHECK.md](S02_IMPL_CHECK.md)
 - D-042·D-043: 모의 5거래일(11/26~12/2), D-027 판정 12/1 / D-044: 모의 운용 금액 유연, 비율 한도 → [PAPER_3DAY_CHECK.md](PAPER_3DAY_CHECK.md) §6
-- 수수료 영향 검토(현재 적용 0.147% — 비대면 개설이나 관리점이 영업점, 온라인 전용 관리점 변경 시 0.018%) → [COST_IMPACT_BRANCH_RATE.md](COST_IMPACT_BRANCH_RATE.md)
+- D-045: 현재 요율(국내 편도 0.147%, 비용 모델 0.15%)로 진행 → COMMON_SPEC §9 갱신, T0 전환 보고 기준 정리 / D-046: 모의 운용 금액 기본 = 주문 가능 금액 전액 → [COST_IMPACT_BRANCH_RATE.md](COST_IMPACT_BRANCH_RATE.md)
 
 ## D-021~D-023 반영 — 6회차 (2026-11-24)
 - D-021: 10만원 단계 정수 주문 + 1주 예외 매수, 소수점은 API 확인 후 / D-022: 증권사 한국투자증권 통일
