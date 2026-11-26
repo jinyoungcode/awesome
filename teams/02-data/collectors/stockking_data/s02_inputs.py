@@ -29,8 +29,17 @@ BAR_LOOKBACK_DAYS = 520     # 달력일 → 약 350거래일
 INDEX_LOOKBACK_DAYS = 420   # 달력일 → 약 280거래일
 
 # D-027 점검용 주문 대상 가격대 (teams/04-trading/PAPER_3DAY_CHECK.md §4)
-TECH_RANGES = {"T1": (27_000, 33_000), "T5": (33_000, 37_500)}
+# D-044: 운용 금액 기준 비율. 목표 = 운용 금액 ÷ 5
+#   T1·T2 = 목표의 90~110% (15만 원이면 27,000~33,000원)
+#   T5(1주 예외, 목표 초과) = 목표의 110% 초과 ~ 125% (15만 원이면 33,000~37,500원, D-025 상한 운용 금액 30% 이내)
+DEFAULT_CAPITAL = 150_000
+TECH_RATIOS = {"T1": (0.90, 1.10), "T5": (1.10, 1.25)}
 TECH_TOP_N = 5
+
+
+def tech_ranges(capital: int) -> dict[str, tuple[int, int]]:
+    target = capital / 5
+    return {role: (round(target * lo), round(target * hi)) for role, (lo, hi) in TECH_RATIOS.items()}
 
 # KIS iscd_stat_cls_code: 51 관리종목, 52 투자위험, 53 투자경고, 54 투자주의, 58 거래정지, 59 단기과열 ⚠ 재확인
 BLOCK_STATUS = {"51": "관리종목", "52": "투자위험", "53": "투자경고", "54": "투자주의환기", "58": "거래정지", "59": "단기과열"}
@@ -117,7 +126,7 @@ def judge(symbol: str, market: str, bars: list[dict], status: dict | None, T: da
 
 def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
           kosdaq150_code: str | None = None, extra_symbols: list[str] | None = None, log=print,
-          names: dict[str, str] | None = None) -> dict:
+          names: dict[str, str] | None = None, capital: int = DEFAULT_CAPITAL) -> dict:
     names = names or {}
     out.mkdir(parents=True, exist_ok=True)
     istart = T - timedelta(days=INDEX_LOOKBACK_DAYS)
@@ -151,7 +160,8 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
             log(f"  일봉 {i}/{len(symbols)} 종목 완료 (API 호출 {q.calls}회)")
 
     universe = sorted(v.symbol for v in verdicts if v.passed)
-    tech = pick_tech_candidates(verdicts)
+    ranges = tech_ranges(capital)
+    tech = pick_tech_candidates(verdicts, ranges)
     write_csv(out / "bars.csv", ["date", "symbol", "open", "high", "low", "close", "volume", "value"],
               sorted(all_bars, key=lambda b: (b["date"], b["symbol"])))
     (out / "universe.txt").write_text("".join(f"{s}\n" for s in universe), encoding="utf-8")
@@ -168,7 +178,8 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
         "status_checked": T == date.today(), "api_calls": q.calls,
-        "tech_pick": {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in TECH_RANGES},
+        "tech_pick": {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in ranges},
+        "tech_ranges": {"operating_capital": capital, "target": capital // 5, **{k: list(v) for k, v in ranges.items()}},
         "limitations": [
             "구성종목은 T일 현재 목록(시점별 이력 아님) — 3일 모의 용도로는 충분, 백테스트용 아님",
             "수정주가는 KIS 제공값(자체 수정계수 af-v1 아님, DATA_DICTIONARY §4) — 모의 단계 임시",
@@ -180,11 +191,11 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     return manifest
 
 
-def pick_tech_candidates(verdicts: list[Verdict]) -> list[dict]:
+def pick_tech_candidates(verdicts: list[Verdict], ranges: dict[str, tuple[int, int]] | None = None) -> list[dict]:
     """D-027 T1/T5 후보: 상태 이상(U6/U7) 없고 T일 일봉이 있는 종목 중 가격대 안, 20일 평균 거래대금 상위 순.
     U3~U5·U8 탈락은 무관(점검 주문은 전략 유니버스 밖이어도 됨). 1순위를 지정 종목으로 쓴다."""
     out = []
-    for role, (lo, hi) in TECH_RANGES.items():
+    for role, (lo, hi) in (ranges or tech_ranges(DEFAULT_CAPITAL)).items():
         ok = [v for v in verdicts
               if lo <= v.price <= hi and v.price > 0
               and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)]

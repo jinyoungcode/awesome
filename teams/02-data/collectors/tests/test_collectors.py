@@ -229,3 +229,11 @@ def test_live_quote_keys_separate_file(tmp_path, monkeypatch):
     empty = tmp_path / "none.env"
     with pytest.raises(RuntimeError):
         live_quotes.load_live_quote_keys(empty)
+
+
+def test_tech_ranges_scale_with_capital():
+    assert s02_inputs.tech_ranges(150_000) == {"T1": (27_000, 33_000), "T5": (33_000, 37_500)}
+    assert s02_inputs.tech_ranges(1_000_000) == {"T1": (180_000, 220_000), "T5": (220_000, 250_000)}
+    V = s02_inputs.Verdict
+    rows = s02_inputs.pick_tech_candidates([V("100000", "KOSPI", price=200_000, adv20=9)], s02_inputs.tech_ranges(1_000_000))
+    assert [r["symbol"] for r in rows if r["role"] == "T1"] == ["100000"]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -71,6 +72,9 @@ def main(argv=None) -> int:
             p.add_argument("--out", required=True)
             p.add_argument("--kosdaq150-code")
             p.add_argument("--extra-symbols", default="", help="보유 종목 등 추가 일봉 대상, 쉼표 구분")
+            p.add_argument("--capital", type=int,
+                           default=int(os.environ.get("STOCKKING_OPERATING_CAPITAL") or s02_inputs.DEFAULT_CAPITAL),
+                           help="모의 운용 금액(D-044). 점검 주문 후보 가격대 = 운용 금액÷5 기준 비율. 기본: STOCKKING_OPERATING_CAPITAL 또는 150000")
     a = ap.parse_args(argv)
 
     q = _client(getattr(a, "live_quotes", False))
@@ -88,7 +92,7 @@ def main(argv=None) -> int:
         k2, kq = read_constituent_names(a.kospi200), read_constituent_names(a.kosdaq150)
         m = s02_inputs.build(q, a.date, sorted(k2), sorted(kq), out,
                              a.kosdaq150_code, [s.strip().zfill(6) for s in a.extra_symbols.split(",") if s.strip()],
-                             names=k2 | kq)
+                             names=k2 | kq, capital=a.capital)
         print(json.dumps(m, ensure_ascii=False, indent=2))
         return 0
 
