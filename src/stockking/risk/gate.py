@@ -237,8 +237,9 @@ class RiskGate:
             held_value = held.quantity * ref if held else 0
             weight_after = (held_value + order_value) / equity
             # D-025: 1주 예외(신규 진입 1주)는 '1주 가격 ≤ 총자산 30%'가 비중 한도를 대신한다. 그 외 22%(D-005)
+            # 리스크관리실: 허용오차 0.1%p — 일반 22.1%, 1주 예외 신규 진입 30.1% (수수료는 계산에서 빼지 않음)
             cap = (L.one_share_max_price_pct if order.sizing_exception and order.order_target and not held
-                   else L.max_position_weight + L.position_weight_tolerance)
+                   else L.max_position_weight) + L.position_weight_tolerance
             if weight_after > cap:
                 reasons.append(f"POSITION_WEIGHT: 주문 후 {weight_after:.1%} > {cap:.0%}")
             # 9. 동시 보유 종목 수

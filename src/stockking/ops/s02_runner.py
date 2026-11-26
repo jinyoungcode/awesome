@@ -334,6 +334,11 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--operator 필요")
         plan_path = PLAN_DIR / f"order_plan_{sd:%Y%m%d}.csv"
         rows = read_plan(plan_path) if plan_path.exists() else []
+        from ..risk.stages import capital_error
+        bal = kis.inquire_balance()
+        if (err := capital_error(bal.get("cash_d2") or bal["cash"], state["starting_cash"])):
+            print(f"중단: {err}")
+            return 2
         prices = {r["ticker"]: kis.inquire_price(r["ticker"])["base_price"] for r in rows}
         state["start_of_day_equity"] = book_equity(state, prices)
         res = submit_plan(rows, state, kis, journal, prices, records=load_records())

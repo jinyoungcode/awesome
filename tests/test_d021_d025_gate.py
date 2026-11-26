@@ -93,3 +93,29 @@ def test_exception_position_over_30pct_blocks_add_but_no_forced_sell():
     s = AccountSnapshot(97_500, held, {"000100": 52_500}, 150_000)
     assert not gate().check(buy(52_500, stop_pct=0.05, exc="ONE_SHARE_OVER"), s)
     assert gate().check(OrderRequest("000100", Side.SELL, 1, OrderType.LIMIT, 52_500, "S02"), s)
+
+
+def test_weight_tolerance_221_and_301():
+    """리스크관리실: 허용오차 0.1%p. 일반 22.1%까지 통과·22.2% 거부, 1주 예외 신규 30.1%까지."""
+    eq = 1_000_000
+    def chk(price, qty, exc="", target=None, stop=None):
+        o = OrderRequest("000100", Side.BUY, qty, OrderType.LIMIT, price, "S02", stop_price=stop,
+                         order_target=target, sizing_exception=exc)
+        return RiskGate(limits_for(CapitalStage.T0)).check(o, AccountSnapshot(eq, {}, {"000100": price}, eq))
+    assert chk(221_000, 1)                                            # 22.1% 통과
+    assert any("POSITION_WEIGHT" in r for r in chk(222_000, 1).reasons)   # 22.2% 거부
+    # 1주 예외(목표 20만 원의 110% 초과): 30.1% 통과, 30.2% 거부 (가격 상한 30%는 별도 검사라 비중만 확인)
+    ok = chk(301_000, 1, "ONE_SHARE_OVER", 200_000, 301_000 * 0.95).reasons
+    assert not any("POSITION_WEIGHT" in r for r in ok)
+    bad = chk(302_000, 1, "ONE_SHARE_OVER", 200_000, 302_000 * 0.95).reasons
+    assert any("POSITION_WEIGHT" in r for r in bad)
+
+
+def test_33000_order_passes_after_fees_at_150k():
+    """15만 원: 33,000원(22%) 주문 4건이 앞선 수수료 반영 후에도 통과 (수수료는 계산에서 빼지 않음)."""
+    held = {f"00020{i}": Position(f"00020{i}", 1, 33_000) for i in range(3)}
+    prices = {**{k: 33_000 for k in held}, "000100": 33_000}
+    cash = 150_000 - 3 * 33_005
+    s = AccountSnapshot(cash, held, prices, 150_000)
+    assert s.equity == 149_985
+    assert gate().check(buy(33_000, stop_pct=0.08), s)              # 33,000 / 149,985 = 22.002%

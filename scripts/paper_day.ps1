@@ -8,6 +8,7 @@
       powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step cancel    # 15:15
       powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step close     # 15:45 장 마감 후
       powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step plan      # 18:30 (자료팀 파일 필요)
+  모의 운용 금액(D-044): 어느 단계든  -OperatingCapital 1000000  을 붙이면 그 금액 기준 (모의 예수금 이하)
   기록: var\logs\paper_day_<날짜>_<단계>.log
 #>
 param(
@@ -18,11 +19,13 @@ param(
     [string]$DataDir,
     [string]$SignalDate,
     [string]$ExecDate,
+    [string]$OperatingCapital,   # D-044: 모의 운용 금액(원). 비우면 기본 15만 원 또는 이미 설정된 환경변수
     [switch]$PromptKeys
 )
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $env:PYTHONUTF8 = '1'
+if ($OperatingCapital) { $env:STOCKKING_OPERATING_CAPITAL = $OperatingCapital }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 $vpy = Join-Path $RepoRoot '.venv\Scripts\python.exe'

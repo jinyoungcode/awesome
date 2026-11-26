@@ -206,13 +206,21 @@ def test_paper_report_counts():
 
 
 # ---------- D-031/D-032 ----------
-def test_operating_capital_and_warning(monkeypatch):
-    from stockking.risk.stages import STARTING_CAPITAL, capital_warning, operating_capital
+def test_operating_capital_and_capital_error(monkeypatch):
+    from stockking.risk.stages import STARTING_CAPITAL, capital_error, operating_capital
     monkeypatch.delenv("STOCKKING_OPERATING_CAPITAL", raising=False)
-    assert STARTING_CAPITAL == operating_capital() == 150_000
-    assert operating_capital() // 5 == 30_000
-    assert capital_warning(150_000) is None and capital_warning(170_000) is None
-    assert "운용 기준" in capital_warning(100_000_000)
+    monkeypatch.delenv("STOCKKING_CAPITAL_STAGE", raising=False)
+    assert STARTING_CAPITAL == operating_capital() == 150_000            # 미설정 기본 15만 원
+    # D-044: 운용 금액 ≤ 예수금이면 정상(경고 없음), 초과면 오류
+    assert capital_error(100_000_000) is None and capital_error(150_000) is None
+    assert "예수금" in capital_error(149_999)
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "1,000,000")       # 모의: 임의 금액
+    assert operating_capital() == 1_000_000 and capital_error(5_000_000) is None
+    assert capital_error(999_999)
+    monkeypatch.setenv("STOCKKING_CAPITAL_STAGE", "t0")                   # T0 실전은 15만 원 고정
+    with pytest.raises(ValueError, match="15만"):
+        operating_capital()
+    monkeypatch.setenv("STOCKKING_CAPITAL_STAGE", "paper")
     monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "0")
     with pytest.raises(ValueError):
         operating_capital()

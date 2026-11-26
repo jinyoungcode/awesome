@@ -20,7 +20,7 @@ from ..domain import AccountSnapshot, OrderRequest, OrderStatus, OrderType, Posi
 from ..execution import OrderRouter
 from ..krx import floor_to_tick
 from ..risk import KillSwitch, RiskGate
-from ..risk.stages import capital_warning
+from ..risk.stages import capital_error
 from .common import Checklist, journal_path
 from .kis_session import add_key_args, make_client
 
@@ -58,6 +58,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         bal = kis.inquire_balance()
         cl.check("3. 잔고 조회", True, f"예수금 {bal['cash']:,}원, 보유 {len(bal['positions'])}종목")
+        err = capital_error(bal["cash_d2"] or bal["cash"])
+        from ..risk.stages import operating_capital
+        cl.check("3-1. 운용 금액 ≤ 모의 예수금 (D-044)", err is None, err or f"운용 금액 {operating_capital():,}원")
     except Exception as e:  # noqa: BLE001
         cl.check("3. 잔고 조회", False, str(e))
         return cl.finish()
@@ -72,8 +75,6 @@ def main(argv: list[str] | None = None) -> int:
     limit = floor_to_tick(int(q["price"] * 0.90))
     positions = {s: Position(s, qty, avg) for s, (qty, avg) in bal["positions"].items()}
     equity = bal["total_equity"] or bal["cash"]
-    if (w := capital_warning(equity)):
-        print(f"  ※ 경고: {w}")
     snap = AccountSnapshot(bal["cash"], positions, {a.symbol: q["price"]}, equity)
     router = OrderRouter(kis, RiskGate(kill_switch=KillSwitch()), Journal(journal_path()), TradingMode.PAPER)
     order = OrderRequest(a.symbol, Side.BUY, 1, OrderType.LIMIT, limit, "connect_check")

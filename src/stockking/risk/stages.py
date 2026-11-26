@@ -24,25 +24,29 @@ SLOTS = 5   # 동시 보유 한도 → 주문 목표 = (시작 자금 + 실현 �
 
 
 def operating_capital() -> int:
-    """운용 기준 자금. 기본 15만 원, STOCKKING_OPERATING_CAPITAL 로 변경(증액은 대표 승인 후)."""
-    value = int(os.environ.get("STOCKKING_OPERATING_CAPITAL", STARTING_CAPITAL))
+    """운용 기준 자금. 기본 15만 원(D-032, T0 실전 고정).
+    모의투자는 STOCKKING_OPERATING_CAPITAL 로 모의 계좌 예수금 이하 임의 금액을 정할 수 있다(D-044).
+    비중·손실 한도·1주 예외는 모두 이 금액 기준 비율로 계산된다."""
+    raw = os.environ.get("STOCKKING_OPERATING_CAPITAL", "").replace(",", "").replace("_", "").strip()
+    value = int(raw) if raw else STARTING_CAPITAL
     if value <= 0:
         raise ValueError("STOCKKING_OPERATING_CAPITAL 은 양수여야 합니다")
+    if resolve_stage() is not CapitalStage.PAPER and value != STARTING_CAPITAL:
+        raise ValueError("실전 T0 운용 금액은 15만 원 고정(D-031·D-032) — 증액은 대표 승인 후 코드로")
     return value
 
 
-def capital_warning(broker_equity: int, capital: int | None = None) -> str | None:
-    """증권사 계좌 평가금이 운용 기준 자금과 크게 다르면 경고.
-
-    KIS 모의 계좌는 기본 예수금이 운용 기준(15만 원)보다 훨씬 클 수 있다. 그러면 비중·손실 한도가
-    계좌 전체 기준으로 계산돼 실전(15만 원)과 달라진다 → 모의 계좌 투자금을 15만 원 근처로 맞추거나,
-    S02 실행기에서 운용 기준 자금으로 장부를 따로 관리해야 한다.
-    """
+def capital_error(broker_cash: int, capital: int | None = None) -> str | None:
+    """D-044: 운용 금액이 모의 계좌 예수금보다 크면 오류. 작거나 같으면 정상(경고 없음)."""
     capital = capital or operating_capital()
-    if broker_equity > capital * 1.2 or broker_equity < capital * 0.8:
-        return (f"증권사 평가금 {broker_equity:,}원 ≠ 운용 기준 {capital:,}원 — 한도가 실전과 다르게 계산됩니다 "
-                "(PAPER_RUNBOOK §0 참고)")
+    if capital > broker_cash:
+        return (f"운용 금액 {capital:,}원 > 모의 계좌 예수금 {broker_cash:,}원 — "
+                "STOCKKING_OPERATING_CAPITAL 을 예수금 이하로 낮추세요(D-044)")
     return None
+
+
+def capital_warning(broker_equity: int, capital: int | None = None) -> str | None:  # 하위 호환
+    return capital_error(broker_equity, capital)
 
 
 # D-028 확정값
