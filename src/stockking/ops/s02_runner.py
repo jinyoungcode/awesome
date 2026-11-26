@@ -210,7 +210,7 @@ def cancel_open_entries(records: list[dict], kis, journal: Journal, day: str, no
         if s["order_type"] == "LDAY" and oid in open_ids:
             c = kis.cancel_order(s["broker_order_id"], s["ticker"], 0, krx_org_no=s.get("krx_org_no"))
             journal.write("s02_cancel", client_order_id=s["client_order_id"], broker_order_id=s["broker_order_id"],
-                          accepted=c.accepted, message=c.message)
+                          cancel_odno=c.broker_order_id, accepted=c.accepted, message=c.message)
             done.append(s["ticker"])
     return done
 

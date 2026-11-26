@@ -21,17 +21,38 @@ from .kis_session import add_key_args, make_client
 from .recovery import scan_journal
 
 
-def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
-    norm = lambda x: (x or "").lstrip("0")  # noqa: E731
+def compare(journal_accepted: dict[str, str], broker_rows: list[dict], cancel_odnos: set[str] | None = None) -> dict:
+    """시스템 접수 주문번호 ↔ KIS 주문내역.
+
+    KIS 는 취소·정정 주문을 별도 행(새 odno, orgn_odno = 원주문번호)으로 돌려준다(1일차 실측).
+    orgn_odno 가 시스템 주문이거나, 감사 로그의 취소 응답 주문번호(cancel_odnos)와 같으면 '시스템의 취소·정정 행'으로 본다.
+    """
+    norm = lambda x: str(x or "").lstrip("0")  # noqa: E731
     ours = {norm(odno): cid for cid, odno in journal_accepted.items() if odno}
-    theirs = {norm(r["odno"]): r for r in broker_rows}
+    cancels = {norm(x) for x in (cancel_odnos or set()) if x}
+    originals, amendments, unknown = {}, [], []
+    for r in broker_rows:
+        o, org = norm(r.get("odno")), norm(r.get("orgn_odno"))
+        if o in ours:
+            originals[o] = r
+        elif (org and org in ours) or o in cancels:
+            amendments.append(o)          # 시스템이 낸 취소·정정
+        else:
+            unknown.append(o)
     dup_odno = [o for o, n in Counter(norm(v) for v in journal_accepted.values() if v).items() if n > 1]
     return {
-        "matched": sorted(set(ours) & set(theirs)),
-        "missing_at_broker": sorted(set(ours) - set(theirs)),   # 시스템은 접수됐다는데 증권사에 없음
-        "unknown_to_system": sorted(set(theirs) - set(ours)),   # 수동 주문 또는 기록 누락
+        "matched": sorted(originals),
+        "amendments": sorted(set(amendments)),                     # 시스템 취소·정정 행 (정상)
+        "missing_at_broker": sorted(set(ours) - set(originals)),   # 시스템은 접수됐다는데 증권사에 없음
+        "unknown_to_system": sorted(set(unknown)),                 # 수동 주문 또는 기록 누락
         "duplicate_broker_ids": dup_odno,
     }
+
+
+def cancel_order_ids(records: list[dict]) -> set[str]:
+    """감사 로그의 취소 응답에서 증권사 취소주문번호 (cancel_odno)."""
+    return {str(r.get("cancel_odno")) for r in records
+            if r.get("event") in ("cancel_response", "s02_cancel", "tech_order") and r.get("cancel_odno")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     kis = make_client(a)
     rows, bal = kis.inquire_daily_orders(a.date), kis.inquire_balance()
     rep = scan_journal(journal_path(day))
-    diff = compare(rep.accepted, rows)
+    records = []
+    jp = journal_path(day)
+    if jp.exists():
+        for line in jp.read_text(encoding="utf-8").splitlines():
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    diff = compare(rep.accepted, rows, cancel_order_ids(records))
 
     cl = Checklist(f"일일 대사 {a.date}")
     if not rows and rep.accepted:

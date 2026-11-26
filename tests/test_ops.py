@@ -81,7 +81,7 @@ def test_killswitch_drill_refuses_if_already_tripped(tmp_path):
 def test_reconcile_compare():
     d = compare({"A": "0001", "B": "0002", "C": "0002"},
                 [{"odno": "0000000001"}, {"odno": "0002"}, {"odno": "0009"}])
-    assert d["matched"] == ["1", "2"] and d["unknown_to_system"] == ["9"]
+    assert d["matched"] == ["1", "2"] and d["unknown_to_system"] == ["9"] and d["amendments"] == []
     assert d["duplicate_broker_ids"] == ["2"] and d["missing_at_broker"] == []
 
 
@@ -209,3 +209,24 @@ def test_windows_default_secret_path(monkeypatch):
     monkeypatch.setenv("APPDATA", "/fake/AppData/Roaming")
     assert config.default_secrets_file(is_windows=True) == Path("/fake/AppData/Roaming/stockking/secrets.env")
     assert config.default_secrets_file(is_windows=False).parts[-3:] == (".config", "stockking", "secrets.env")
+
+
+def test_reconcile_cancel_row_matched_by_orgn_odno():
+    """1일차 실측: 원주문 0000025951 + 취소 행 0000025953(orgn_odno 25951) → 수동/미기록 아님."""
+    rows = [{"odno": "0000025951", "orgn_odno": "", "filled_qty": 0},
+            {"odno": "0000025953", "orgn_odno": "0000025951", "filled_qty": 0, "canceled": True}]
+    d = compare({"SK-1": "0000025951"}, rows)
+    assert d["matched"] == ["25951"] and d["amendments"] == ["25953"]
+    assert d["unknown_to_system"] == [] and d["missing_at_broker"] == []
+    # orgn_odno 가 비어 와도 감사 로그의 취소주문번호로 매칭
+    rows2 = [rows[0], {"odno": "0000025953", "orgn_odno": "", "filled_qty": 0}]
+    assert compare({"SK-1": "0000025951"}, rows2, {"0000025953"})["unknown_to_system"] == []
+    # 진짜 수동 주문은 여전히 잡힘
+    assert compare({"SK-1": "0000025951"}, rows + [{"odno": "0000030000", "orgn_odno": ""}])["unknown_to_system"] == ["30000"]
+
+
+def test_cancel_order_ids_from_journal():
+    from stockking.ops.daily_reconcile import cancel_order_ids
+    recs = [{"event": "cancel_response", "cancel_odno": "0000025953"}, {"event": "s02_cancel", "cancel_odno": "7"},
+            {"event": "broker_response", "cancel_odno": "x"}]
+    assert cancel_order_ids(recs) == {"0000025953", "7"}
