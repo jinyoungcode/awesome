@@ -4,6 +4,69 @@
 > 실행 장소: **대표 윈도우 PC** (클라우드 세션은 KIS 서버에 접속 불가)
 > 데이터는 시세 재배포 금지 약관 때문에 **저장소에 커밋 금지** → 모두 `%USERPROFILE%\stockking-data` 아래에 저장
 
+## ★ 오늘 밤 1회 (11/26 → 2일차 11/27 첫 S02 주문용) — PowerShell 그대로
+
+> 대표 PC 기준: 저장소 `C:\stockking\awesome`(브랜치 `claude/stock-king-03-dev` 그대로, **전환하지 않음**), `.venv`, 모의 키 `%APPDATA%\stockking\secrets.env`
+> 방식: 자료팀 코드를 **옆 폴더(`C:\stockking\awesome-data`)에 git worktree로** 받아 같은 `.venv` 파이썬으로 실행. 현재 작업 폴더·브랜치는 건드리지 않음
+
+**0) 구성종목 파일 2개 (없으면, 약 3분)** — 브라우저에서 `data.krx.co.kr` → 기본 통계 → 지수 → 주가지수 → 지수구성종목 → `코스피 200` 조회 → 다운로드(CSV) / `코스닥 150` 같은 방법. 아래 경로로 저장:
+`%USERPROFILE%\stockking-data\constituents\kospi200.csv`, `...\kosdaq150.csv`
+
+**1) 코드 받기 + 환경 (1분)**
+```powershell
+cd C:\stockking\awesome
+git fetch origin claude/stock-king-02-data
+git worktree add ..\awesome-data origin/claude/stock-king-02-data
+#  (이미 있으면) git -C ..\awesome-data checkout --detach origin/claude/stock-king-02-data
+$env:STOCKKING_SECRETS_FILE = "$env:APPDATA\stockking\secrets.env"
+$env:STOCKKING_DATA_DIR     = "$env:USERPROFILE\stockking-data"
+$env:PYTHONUTF8 = "1"
+$PY  = ".\.venv\Scripts\python.exe"
+$COL = "..\awesome-data\teams\02-data\collectors\collect.py"
+$C   = "$env:USERPROFILE\stockking-data\constituents"
+$OUT = "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-26"
+New-Item -ItemType Directory -Force $C, $OUT | Out-Null
+```
+
+**2) 연결 확인 (10초)**
+```powershell
+& $PY $COL check
+```
+삼성전자 현재가와 `"KOSPI200": {"name": ..., "rows": N}`이 나오면 정상.
+
+**3) S02 입력 파일 4종 생성**
+```powershell
+& $PY $COL s02-inputs --kospi200 "$C\kospi200.csv" --kosdaq150 "$C\kosdaq150.csv" --out $OUT --date 2026-11-26 --status-now --interval 0.5
+```
+| 구성 | 호출 수 | 예상 시간 (`--interval 0.5`) | 기본 1.0초 |
+|---|---|---|---|
+| **전체** KOSPI200+KOSDAQ150 (약 350종목) | 약 1,750회 | **약 15~20분** | 약 30~35분 |
+| **대안: KOSPI200만** (`--kosdaq150 ...` 부분을 지움) | 약 1,000회 | **약 9~12분** | 약 17~20분 |
+
+- `--date 2026-11-26 --status-now`: 자정을 넘겨도 그대로 쓰면 됩니다(11/26 다음 거래일 전이라 지금 상태 = 11/26 상태).
+- `EGW00201`(호출 한도)이 자주 보이면 `--interval 1.0`으로 다시 실행. 처음부터 다시 만듭니다.
+- **KOSPI200만 대안의 영향:** 유니버스가 KOSPI 종목으로만 줄어듭니다(KOSDAQ 신호 없음). `index.csv`에는 KOSDAQ150 지수도 그대로 들어갑니다. 2일차 주문 경로 점검에는 충분합니다.
+- KOSDAQ150 지수 코드 오류가 나면: 화면 메시지를 그대로 자료팀에 전달(임시로 `--kosdaq150-code <코드>` 지정).
+
+**4) 확인 (1분)**
+```powershell
+Get-Content "$OUT\manifest.json" -Encoding UTF8 | Select-String "universe_passed|bad_ohlc_count|status_checked|KOSPI200|KOSDAQ150|excluded_by_rule"
+```
+`universe_passed` > 0, `bad_ohlc_count` 0, `status_checked` true, 지수 각 200행 이상이면 통과.
+
+**5) 프로그램팀 plan 실행 (현재 폴더 그대로)**
+```powershell
+& $PY -m stockking.ops.s02_runner plan --bars "$OUT\bars.csv" --universe "$OUT\universe.txt" --markets "$OUT\markets.csv" --index "$OUT\index.csv" --signal-date 2026-11-26 --exec-date 2026-11-27
+```
+
+**6) (선택) 오늘 분봉도 적재 — plan 이후, 약 12~25분**
+```powershell
+& $PY $COL minute --kospi200 "$C\kospi200.csv" --kosdaq150 "$C\kosdaq150.csv" --date 2026-11-26 --interval 0.5
+```
+늦으면 생략해도 됩니다(과거일자 분봉으로 나중에 백필 가능).
+
+---
+
 ## 1. 일정과 마감 (D-042·D-043 반영: 모의 5거래일 11/26·11/27·11/30·12/1·12/2)
 
 | 날짜 | 할 일 | 마감 | 비고 |

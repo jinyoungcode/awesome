@@ -72,12 +72,19 @@ def main(argv=None) -> int:
             p.add_argument("--out", required=True)
             p.add_argument("--kosdaq150-code")
             p.add_argument("--extra-symbols", default="", help="보유 종목 등 추가 일봉 대상, 쉼표 구분")
+            p.add_argument("--status-now", action="store_true",
+                           help="자정 이후 직전 거래일(--date) 파일을 만들 때, 지금 조회한 종목 상태를 그날 상태로 사용")
             p.add_argument("--capital", type=int,
                            default=int(os.environ.get("STOCKKING_OPERATING_CAPITAL") or s02_inputs.DEFAULT_CAPITAL),
                            help="모의 운용 금액(D-044). 점검 주문 후보 가격대 = 운용 금액÷5 기준 비율. 기본: STOCKKING_OPERATING_CAPITAL 또는 150000")
+    for p in sub.choices.values():
+        p.add_argument("--interval", type=float, default=None,
+                       help="호출 간격(초). 모의 기본 1.0. 0.5까지 낮춰도 한도 초과 시 자동 재시도")
     a = ap.parse_args(argv)
 
     q = _client(getattr(a, "live_quotes", False))
+    if a.interval is not None:
+        q._c.min_interval_sec = max(0.05, a.interval)
     if a.cmd == "check":
         st = q.price_status("005930")
         name, rows = q.index_bars(s02_inputs.KOSPI200_CODE, date.today().replace(day=1), date.today())
@@ -85,14 +92,15 @@ def main(argv=None) -> int:
         return 0
 
     if a.cmd == "s02-inputs":
-        if not (a.kospi200 and a.kosdaq150):
-            sys.exit("--kospi200, --kosdaq150 구성종목 파일이 필요합니다")
+        if not a.kospi200:
+            sys.exit("--kospi200 구성종목 파일이 필요합니다 (--kosdaq150 생략 시 KOSPI200만으로 유니버스 구성)")
         out = Path(a.out).expanduser()
         _refuse_inside_git(out)
-        k2, kq = read_constituent_names(a.kospi200), read_constituent_names(a.kosdaq150)
+        k2 = read_constituent_names(a.kospi200)
+        kq = read_constituent_names(a.kosdaq150) if a.kosdaq150 else {}
         m = s02_inputs.build(q, a.date, sorted(k2), sorted(kq), out,
                              a.kosdaq150_code, [s.strip().zfill(6) for s in a.extra_symbols.split(",") if s.strip()],
-                             names=k2 | kq, capital=a.capital)
+                             names=k2 | kq, capital=a.capital, status_now=True if a.status_now else None)
         print(json.dumps(m, ensure_ascii=False, indent=2))
         return 0
 

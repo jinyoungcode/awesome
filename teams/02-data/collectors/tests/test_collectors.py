@@ -237,3 +237,12 @@ def test_tech_ranges_scale_with_capital():
     V = s02_inputs.Verdict
     rows = s02_inputs.pick_tech_candidates([V("100000", "KOSPI", price=200_000, adv20=9)], s02_inputs.tech_ranges(1_000_000))
     assert [r["symbol"] for r in rows if r["role"] == "T1"] == ["100000"]
+
+
+def test_s02_inputs_status_now_and_kospi_only(tmp_path):
+    """자정 이후 직전 거래일 파일: status_now=True면 상태 조회, KOSDAQ150 구성종목 없이도 생성."""
+    m = s02_inputs.build(KisQuotes(FakeClient()), T, ["005930"], [], tmp_path, log=lambda *_: None, status_now=True)
+    assert m["status_checked"] is True and m["universe_passed"] == 1
+    assert {r["symbol"] for r in csv.DictReader((tmp_path / "index.csv").open())} == {"KOSPI200", "KOSDAQ150"}
+    m2 = s02_inputs.build(KisQuotes(FakeClient()), T, ["005930"], [], tmp_path / "b", log=lambda *_: None, status_now=False)
+    assert m2["universe_passed"] == 0

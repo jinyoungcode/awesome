@@ -126,7 +126,10 @@ def judge(symbol: str, market: str, bars: list[dict], status: dict | None, T: da
 
 def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
           kosdaq150_code: str | None = None, extra_symbols: list[str] | None = None, log=print,
-          names: dict[str, str] | None = None, capital: int = DEFAULT_CAPITAL) -> dict:
+          names: dict[str, str] | None = None, capital: int = DEFAULT_CAPITAL, status_now: bool | None = None) -> dict:
+    """status_now: 종목 상태(U6/U7)를 지금 조회해 T일 상태로 쓸지. 기본은 T가 오늘일 때만.
+    자정을 넘겨 T(직전 거래일) 파일을 만들 때, 그 사이 거래일이 없으면 True로 지정해도 된다."""
+    check_status = (T == date.today()) if status_now is None else status_now
     names = names or {}
     out.mkdir(parents=True, exist_ok=True)
     istart = T - timedelta(days=INDEX_LOOKBACK_DAYS)
@@ -151,7 +154,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         bad_ohlc += [f"{b['symbol']} {b['date']}" for b in bars if not valid_ohlc(b)]
         all_bars += good
         try:
-            st = q.price_status(s) if T == date.today() else None
+            st = q.price_status(s) if check_status else None
         except Exception:  # noqa: BLE001
             st = None
         if s in markets:
@@ -177,7 +180,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "excluded_by_rule": exclusion_counts(verdicts),
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
-        "status_checked": T == date.today(), "api_calls": q.calls,
+        "status_checked": check_status, "api_calls": q.calls,
         "tech_pick": {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in ranges},
         "tech_ranges": {"operating_capital": capital, "target": capital // 5, **{k: list(v) for k, v in ranges.items()}},
         "limitations": [
