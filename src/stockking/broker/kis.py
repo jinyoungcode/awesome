@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import json
 import time
+import hashlib
+import os
+import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable
 
@@ -48,8 +52,43 @@ Transport = Callable[[str, str, dict, dict], dict]  # (method, url, headers, bod
 def _urllib_transport(method: str, url: str, headers: dict, body: dict) -> dict:
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - 고정 도메인
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 - 고정 도메인
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:   # 403 등도 KIS 오류 본문(error_code 등)을 살려서 돌려준다
+        try:
+            payload = json.loads(e.read().decode() or "{}")
+        except (ValueError, UnicodeDecodeError):
+            payload = {}
+        return {"_http_status": e.code, **payload}
+
+
+# 토큰 재발급 제한(분당 1회 수준) 관련 오류 — 1일차 실측: 1분 안 재실행 시 HTTP 403
+_TOKEN_RATE_LIMIT_CODES = {"EGW00133", "EGW00201"}
+
+
+def default_token_cache() -> Path:
+    """토큰 캐시: 저장소 밖, 비밀값 파일과 같은 폴더 (윈도우 %APPDATA%\\stockking, 그 외 ~/.config/stockking)."""
+    env = os.environ.get("STOCKKING_TOKEN_CACHE")
+    if env:
+        return Path(env)
+    from ..config import default_secrets_file
+    return default_secrets_file().parent / "kis_paper_token.json"
+
+
+def _restrict_to_owner(path: Path) -> None:
+    """본인만 읽기·쓰기 (POSIX chmod 600, 윈도우 icacls). 실패해도 동작은 계속(최선 노력)."""
+    try:
+        if os.name == "posix":
+            path.chmod(0o600)
+        else:
+            import subprocess
+            user = os.environ.get("USERNAME", "")
+            if user:
+                subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
+                               capture_output=True, check=False)
+    except OSError:
+        pass
 
 
 @dataclass
@@ -78,7 +117,7 @@ class KisPaperClient:
     min_interval_sec = 1.0  # 모의투자 유량이 낮다(초당 1~2건 수준 보고). 공식값 확인 전 보수적으로.
 
     def __init__(self, creds: KisPaperCredentials, transport: Transport | None = None,
-                 base_url: str = KIS_PAPER_BASE_URL) -> None:
+                 base_url: str = KIS_PAPER_BASE_URL, token_cache: Path | None | bool = None) -> None:
         if base_url != KIS_PAPER_BASE_URL or any(m in base_url for m in _KIS_LIVE_HOST_MARKERS):
             raise PermissionError("KisPaperClient 는 모의투자 도메인만 허용합니다 (실계좌 차단)")
         self._creds = creds
@@ -88,11 +127,46 @@ class KisPaperClient:
         self._token_expiry: float = 0.0
         self._last_call: float = 0.0
         self.last_response: dict = {}
+        # token_cache: None=기본 경로, False=파일 캐시 안 함(테스트용 가짜 transport 기본), Path=지정 경로
+        if token_cache is None:
+            token_cache = default_token_cache() if transport is None else False
+        self._token_cache: Path | None = token_cache or None
+
+    def _key_id(self) -> str:
+        # 캐시가 다른 앱키의 토큰을 쓰지 않도록 앱키 지문(해시 앞 12자리)만 저장 — 키 자체는 저장 안 함
+        return hashlib.sha256(self._creds.app_key.reveal().encode()).hexdigest()[:12]
+
+    def _load_cached_token(self) -> bool:
+        if not self._token_cache or not self._token_cache.exists():
+            return False
+        try:
+            c = json.loads(self._token_cache.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if c.get("key_id") != self._key_id() or c.get("base_url") != self._base or time.time() >= c.get("expires_at", 0) - 60:
+            return False
+        self._token, self._token_expiry = Secret(c["access_token"]), float(c["expires_at"])
+        return True
+
+    def _save_cached_token(self) -> None:
+        if not self._token_cache:
+            return
+        try:
+            self._token_cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._token_cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"access_token": self._token.reveal(), "expires_at": self._token_expiry,
+                                       "key_id": self._key_id(), "base_url": self._base}), encoding="utf-8")
+            _restrict_to_owner(tmp)
+            tmp.replace(self._token_cache)
+        except OSError:
+            pass   # 캐시 실패는 치명적이지 않음(다음 실행에서 재발급)
 
     # --- 인증 ---
     def _access_token(self) -> str:
-        # 토큰은 약 24시간 유효, 재발급 빈도 제한(분당 1회 수준) → 메모리 캐시 필수
+        # 토큰은 약 24시간 유효, 재발급 빈도 제한(분당 1회 수준) → 메모리 + 파일(저장소 밖) 캐시
         if self._token and time.time() < self._token_expiry - 60:
+            return self._token.reveal()
+        if self._load_cached_token():
             return self._token.reveal()
         res = self._call("POST", "/oauth2/tokenP", {"content-type": "application/json"}, {
             "grant_type": "client_credentials",
@@ -101,9 +175,16 @@ class KisPaperClient:
         })
         token = res.get("access_token")
         if not token:
-            raise RuntimeError(f"KIS 토큰 발급 실패: {res.get('error_code') or res.get('msg1') or 'unknown'}")
+            code = res.get("error_code") or res.get("msg_cd") or ""
+            status = res.get("_http_status")
+            detail = res.get("error_description") or res.get("msg1") or ""
+            if status == 403 or code in _TOKEN_RATE_LIMIT_CODES:
+                raise RuntimeError(f"KIS 토큰 발급 제한(HTTP {status or '-'} {code}) — 토큰은 1분에 1번만 발급됩니다. "
+                                   "1분 후 다시 실행하세요. (계속되면 모의투자 앱키·시크릿 확인)")
+            raise RuntimeError(f"KIS 토큰 발급 실패: HTTP {status or '-'} {code} {detail}".strip())
         self._token = Secret(token)
         self._token_expiry = time.time() + int(res.get("expires_in", 3600))
+        self._save_cached_token()
         return token
 
     def _headers(self, tr_id: str) -> dict:

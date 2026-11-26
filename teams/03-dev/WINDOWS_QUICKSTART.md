@@ -52,7 +52,7 @@ python -m pip install -e ".[dev]"
 ```powershell
 python -m pytest -q
 ```
-▶ 정상이면: 마지막 줄 `177 passed` (숫자는 더 클 수 있음, **failed 가 없어야** 함)
+▶ 정상이면: 마지막 줄 `187 passed` (숫자는 더 클 수 있음, **failed 가 없어야** 함)
 
 ### 5. 모의투자 키 넣기 (저장소 밖, 본인만 읽기)
 ```powershell
@@ -104,7 +104,8 @@ $env:STOCKKING_OPERATING_CAPITAL = "1000000"     # 또는 직접 지정: 예 100
 |---|---|
 | `비밀값 KIS_PAPER_APP_KEY 이(가) 없습니다` | 5단계 파일 이름·위치 확인: `notepad "$env:APPDATA\stockking\secrets.env"` 로 다시 열어 4줄 확인 |
 | `비밀값 파일이 OneDrive 동기화 폴더 안에 있습니다` | 5단계 경로(`%APPDATA%`)를 그대로 쓰세요 |
-| `KIS 토큰 발급 실패` | 실전 키가 아니라 **모의투자** 키인지, 앱키·시크릿이 바뀌지 않았는지 확인. 토큰은 1분에 1번만 발급되므로 1분 뒤 재시도 |
+| `KIS 토큰 발급 제한 … 1분 후 다시 실행하세요` (HTTP 403) | 토큰은 1분에 1번만 발급됩니다. 1분 기다렸다 다시 실행. 한 번 발급되면 `%APPDATA%\stockking\kis_paper_token.json` 에 약 24시간 저장돼 이후 명령은 다시 발급하지 않습니다(저장소 밖, 본인만 읽기, 앱키는 저장 안 함) |
+| `KIS 토큰 발급 실패` | 실전 키가 아니라 **모의투자** 키인지, 앱키·시크릿이 바뀌지 않았는지 확인 |
 | `EGW00201` (호출 한도) | 1분 기다렸다 다시 실행 |
 | `.\.venv\Scripts\Activate.ps1 ... 스크립트를 실행할 수 없으므로` | 바로 앞의 `Set-ExecutionPolicy -Scope Process Bypass -Force` 를 같은 창에서 먼저 실행 |
 | 그 외 | 화면을 그대로 캡처해 알려 주세요(키 값은 화면에 나오지 않습니다) |
