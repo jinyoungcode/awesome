@@ -2,7 +2,7 @@
 
 > 작성: 2026-11-25 / 매도매수팀
 > 대상 코드: `origin/claude/stock-king-03-dev` @ `74c459f` — `src/stockking/strategy/s02.py`, `strategy/d005_sizer.py`, `ops/s02_runner.py`, `ops/ledger_close.py`, `risk/stages.py`, `krx.py`
-> 결론: **파라미터와 규칙은 모두 일치합니다.** 확인 요청 2건(I1, I2)이 해결되면 매매팀은 12/1 모의 착수에 동의합니다.
+> 결론: **파라미터와 규칙은 모두 일치합니다.** 확인 요청 2건(I1, I2)이 해결되면 매매팀은 11/26(D-042) 모의 착수에 동의합니다. I1은 첫 S02 주문계획(11/26 18:30) 전에 필요합니다.
 
 ## 1. 일치 확인 (✅)
 
