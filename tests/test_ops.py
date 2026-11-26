@@ -85,6 +85,19 @@ def test_reconcile_compare():
     assert d["duplicate_broker_ids"] == ["2"] and d["missing_at_broker"] == []
 
 
+def test_reconcile_cancel_of_system_order_is_not_manual():
+    # 1일차 실측(11/26): 25951 매수 → 취소 주문 25953(orgn_odno=25951) 이 별도 행으로 조회됨
+    rows = [{"odno": "0000025953", "orgn_odno": "0000025951"},
+            {"odno": "0000025951", "orgn_odno": "0000000000"},
+            {"odno": "0000025960", "orgn_odno": "0000025953"},   # 정정의 정정(사슬)
+            {"odno": "0000025970", "orgn_odno": "0000000000"},   # 진짜 수동 주문
+            {"odno": "0000025971", "orgn_odno": "0000025970"}]   # 수동 주문의 취소도 수동
+    d = compare({"SK-1": "0000025951"}, rows)
+    assert d["matched"] == ["25951"]
+    assert d["linked_cancel_modify"] == ["25953", "25960"]
+    assert d["unknown_to_system"] == ["25970", "25971"]
+
+
 # ---------- 호가단위·장시간 ----------
 @pytest.mark.parametrize("price,tick", [(1_999, 1), (4_995, 5), (19_990, 10), (49_950, 50),
                                         (199_900, 100), (499_500, 500), (500_000, 1_000)])

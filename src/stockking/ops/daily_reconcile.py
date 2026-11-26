@@ -26,10 +26,22 @@ def compare(journal_accepted: dict[str, str], broker_rows: list[dict]) -> dict:
     ours = {norm(odno): cid for cid, odno in journal_accepted.items() if odno}
     theirs = {norm(r["odno"]): r for r in broker_rows}
     dup_odno = [o for o, n in Counter(norm(v) for v in journal_accepted.values() if v).items() if n > 1]
+    # KIS 는 취소·정정 주문을 별도 주문번호(odno)로 내역에 남기고 orgn_odno 에 원주문번호를 둔다.
+    # 원주문(또는 그 취소·정정 사슬)이 시스템 주문이면 수동 주문이 아니라 시스템 주문의 취소·정정이다.
+    known, linked = set(ours), set()
+    changed = True
+    while changed:
+        changed = False
+        for o, r in theirs.items():
+            if o not in known and norm(r.get("orgn_odno")) in known:
+                known.add(o)
+                linked.add(o)
+                changed = True
     return {
         "matched": sorted(set(ours) & set(theirs)),
         "missing_at_broker": sorted(set(ours) - set(theirs)),   # 시스템은 접수됐다는데 증권사에 없음
-        "unknown_to_system": sorted(set(theirs) - set(ours)),   # 수동 주문 또는 기록 누락
+        "linked_cancel_modify": sorted(linked),                 # 시스템 주문의 취소·정정 주문
+        "unknown_to_system": sorted(set(theirs) - known),       # 수동 주문 또는 기록 누락
         "duplicate_broker_ids": dup_odno,
     }
 
