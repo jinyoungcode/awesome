@@ -12,6 +12,11 @@
 | 4 | 과최적화 방지 규칙 | 완료 | [EVALUATION.md](EVALUATION.md) §2·§4 |
 | 5 | 리스크관리실 한도 협의 | 협의안 제출, **회신 대기** | [RISK_ALIGNMENT.md](RISK_ALIGNMENT.md) |
 
+## 모의 준비·일정 — 7회차 (2026-11-25~26)
+- S02 명세 ↔ 실행기 대조 완료 → [S02_IMPL_CHECK.md](S02_IMPL_CHECK.md)
+- D-042·D-043: 모의 5거래일(11/26~12/2), D-027 판정 12/1 / D-044: 모의 운용 금액 유연, 비율 한도 → [PAPER_3DAY_CHECK.md](PAPER_3DAY_CHECK.md) §6
+- 영업점 계좌 수수료(편도 0.147%, 참고값) 영향 검토 → [COST_IMPACT_BRANCH_RATE.md](COST_IMPACT_BRANCH_RATE.md)
+
 ## D-021~D-023 반영 — 6회차 (2026-11-24)
 - D-021: 10만원 단계 정수 주문 + 1주 예외 매수, 소수점은 API 확인 후 / D-022: 증권사 한국투자증권 통일
 - D-023: 모의투자 3거래일 → 10만원 실전 4주 이상. 8주 모의 기준을 **3일 기술 점검 + T0→T1 증액 조건**으로 분리 → [PAPER_3DAY_CHECK.md](PAPER_3DAY_CHECK.md)
