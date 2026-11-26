@@ -90,8 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     time.sleep(1)
     c = kis.cancel_order(routed.broker_order_id, a.symbol, 1, krx_org_no=org_no)
     Journal(journal_path()).write("cancel_response", client_order_id=order.client_order_id,
-                                  broker_order_id=routed.broker_order_id, cancel_odno=c.broker_order_id,
-                                  accepted=c.accepted, message=c.message)
+                                  broker_order_id=routed.broker_order_id, accepted=c.accepted, message=c.message)
     cl.check("5. 주문 취소", c.accepted, c.message)
 
     # 모의 서버 반영 지연 대비: 최대 5회, 2초 간격 재조회 (1일차 실측 '내역 없음' 대응)

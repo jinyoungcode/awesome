@@ -113,8 +113,7 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
         r = t3[-1]
         c = kis.cancel_order(r["broker_order_id"], r["symbol"], 1, krx_org_no=r.get("krx_org_no"))
         journal.write("tech_order", scenario="T3-cancel", reason_code=REASON_CODE, operator=operator,
-                      symbol=r["symbol"], broker_order_id=r["broker_order_id"], cancel_odno=c.broker_order_id,
-                      accepted=c.accepted, message=c.message)
+                      symbol=r["symbol"], broker_order_id=r["broker_order_id"], accepted=c.accepted, message=c.message)
         return f"T3 취소 {'성공' if c.accepted else '실패'}: {c.message}"
 
     if not symbol:
