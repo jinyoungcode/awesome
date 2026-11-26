@@ -23,7 +23,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-sys.path[:0] = [str(HERE), str(REPO / "src")]
+sys.path.insert(0, str(HERE))
+# 프로그램팀 패키지(stockking)는 **설치된 것(.venv, pip install -e)을 우선** 쓴다 — 토큰 파일 캐시 등 최신 kis.py.
+# 설치돼 있지 않을 때만 이 저장소의 src를 뒤에 붙인다.
+try:
+    import stockking  # noqa: F401
+except ImportError:
+    sys.path.append(str(REPO / "src"))
 
 from stockking_data.capital import resolve_capital  # noqa: E402
 from stockking_data.constituents import read_constituent_names, read_constituents  # noqa: E402
@@ -33,6 +39,8 @@ from stockking_data.store import _refuse_inside_git, add_lines, data_root, read_
 
 
 def _client(live_quotes: bool = False):
+    import stockking
+    print(f"stockking 패키지: {Path(stockking.__file__).parent}", file=sys.stderr)
     if live_quotes:  # D-041: 실전 앱키, 시세 조회 전용 (주문 코드 없음, 별도 키 파일)
         from stockking_data.live_quotes import KisLiveQuoteClient, load_live_quote_keys
         return KisQuotes(KisLiveQuoteClient(*load_live_quote_keys()))

@@ -148,19 +148,40 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     all_bars: list[dict] = []
     verdicts: list[Verdict] = []
     bad_ohlc: list[str] = []
+    cache = out / "_cache"
+    cache.mkdir(parents=True, exist_ok=True)
     for i, s in enumerate(symbols, 1):
-        bars = q.daily_bars(s, bstart, T, adjusted=True)
+        cf = cache / f"{s}.json"
+        cached = None
+        if cf.exists():
+            try:
+                cached = json.loads(cf.read_text(encoding="utf-8"))
+                if cached.get("T") != T.isoformat() or cached.get("status_checked") != check_status:
+                    cached = None
+            except (ValueError, OSError):
+                cached = None
+        if cached:
+            bars, st = cached["bars"], cached["status"]
+            tag = "캐시"
+        else:
+            bars = q.daily_bars(s, bstart, T, adjusted=True)
+            st = None
+            if check_status:
+                try:
+                    st = q.price_status(s)
+                except Exception as e:  # noqa: BLE001 - 상태 조회 실패는 종목 탈락으로 처리
+                    log(f"    {s} 상태 조회 실패: {e}")
+            tmp = cf.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"T": T.isoformat(), "status_checked": check_status, "bars": bars, "status": st},
+                                      ensure_ascii=False), encoding="utf-8")
+            tmp.replace(cf)
+            tag = "조회"
         good = [b for b in bars if valid_ohlc(b)]
         bad_ohlc += [f"{b['symbol']} {b['date']}" for b in bars if not valid_ohlc(b)]
         all_bars += good
-        try:
-            st = q.price_status(s) if check_status else None
-        except Exception:  # noqa: BLE001
-            st = None
         if s in markets:
             verdicts.append(judge(s, markets[s], good, st, T, calendar, names.get(s, "")))
-        if i % 25 == 0:
-            log(f"  일봉 {i}/{len(symbols)} 종목 완료 (API 호출 {q.calls}회)")
+        log(f"  [{i}/{len(symbols)}] {s} {tag} 일봉 {len(good)}행 (API 호출 {q.calls}회, 재시도 {getattr(q, 'retries', 0)}회)")
 
     universe = sorted(v.symbol for v in verdicts if v.passed)
     ranges = tech_ranges(capital)
@@ -180,7 +201,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "excluded_by_rule": exclusion_counts(verdicts),
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
-        "status_checked": check_status, "api_calls": q.calls,
+        "status_checked": check_status, "api_calls": q.calls, "api_retries": getattr(q, "retries", 0),
         "tech_pick": {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in ranges},
         "tech_ranges": {"operating_capital": capital, "target": capital // 5, **{k: list(v) for k, v in ranges.items()}},
         "limitations": [

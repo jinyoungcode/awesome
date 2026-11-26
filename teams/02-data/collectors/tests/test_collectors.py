@@ -289,3 +289,77 @@ def test_cli_s02_inputs_accepts_auto_capital(tmp_path, monkeypatch):
     k2 = tmp_path / "k2.csv"; k2.write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8")
     assert mod.main(["s02-inputs", "--kospi200", str(k2), "--out", str(tmp_path / "out")]) == 0
     assert got["capital"] == 150_000
+
+
+class FlakyClient(FakeClient):
+    """간헐 HTTP 500 / EGW00201 / 장기 구간 500 흉내."""
+
+    def __init__(self, fail_every=0, **kw):
+        super().__init__(**kw)
+        self.n = 0
+        self.fail_every = fail_every
+        self.max_span = 0
+
+    def _call(self, method, path, headers, p):
+        import io
+        import urllib.error
+        self.n += 1
+        if "FID_INPUT_DATE_2" in p and "FID_INPUT_DATE_1" in p and len(p["FID_INPUT_DATE_1"]) == 8:
+            y = lambda s: date(int(s[:4]), int(s[4:6]), int(s[6:]))  # noqa: E731
+            span = (y(p["FID_INPUT_DATE_2"]) - y(p["FID_INPUT_DATE_1"])).days + 1
+            self.max_span = max(self.max_span, span)
+            if span > 150:
+                raise urllib.error.HTTPError("u", 500, "long", {}, io.BytesIO(b"{}"))
+        if self.fail_every and self.n % self.fail_every == 0:
+            if self.n % (2 * self.fail_every) == 0:
+                return {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"}
+            raise urllib.error.HTTPError("u", 500, "Internal", {}, io.BytesIO(b'{"msg_cd":"X","msg1":"err"}'))
+        return super()._call(method, path, headers, p)
+
+
+def test_retry_on_http_500_and_short_windows(tmp_path, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+    fc = FlakyClient(fail_every=3)
+    q = KisQuotes(fc, log=lambda *_: None)
+    m = s02_inputs.build(q, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    assert m["universe_passed"] == 3 and q.retries > 0
+    assert fc.max_span <= 150                       # 장기 구간 조회 없음
+    assert set(sleeps) <= {1, 2, 4, 8}
+
+
+def test_gives_up_after_5_attempts(monkeypatch):
+    import io
+    import urllib.error
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    class Dead(FakeClient):
+        def _call(self, *a):
+            raise urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b""))
+    q = KisQuotes(Dead(), log=lambda *_: None)
+    from stockking_data.kis_quotes import KisQuoteError
+    with pytest.raises(KisQuoteError):
+        q.price_status("005930")
+    assert q.calls == 5
+
+
+def test_non_retryable_http_error_raises_immediately(monkeypatch):
+    import io
+    import urllib.error
+
+    class Forbidden(FakeClient):
+        def _call(self, *a):
+            raise urllib.error.HTTPError("u", 403, "x", {}, io.BytesIO(b""))
+    q = KisQuotes(Forbidden(), log=lambda *_: None)
+    with pytest.raises(urllib.error.HTTPError):
+        q.price_status("005930")
+    assert q.calls == 1
+
+
+def test_s02_inputs_resume_skips_cached_symbols(tmp_path):
+    q = KisQuotes(FakeClient(), log=lambda *_: None)
+    s02_inputs.build(q, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    first = q.calls
+    q2 = KisQuotes(FakeClient(), log=lambda *_: None)
+    m = s02_inputs.build(q2, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    assert first == 23 and q2.calls == 8 and m["universe_passed"] == 3   # 2차 실행은 지수(2개×4구간)만 조회
