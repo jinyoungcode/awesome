@@ -244,3 +244,41 @@ def test_i1_realized_includes_buy_commission_round_trip():
                                  {"odno": "2", "filled_qty": 1, "avg_price": 31_000.0}], ED, COSTS)
     # 왕복 후 현금 변화 = 실현 순손익 (매수·매도 수수료, 매도세 모두 포함)
     assert st["cash"] - 150_000 == st["realized_pnl"]
+
+
+@pytest.mark.parametrize("contents", [
+    None,
+    "signal_date,exec_date\n2026-11-26,2026-11-26\n",
+    "signal_date,exec_date\n2026-11-25,2026-11-27\n",
+    "signal_date,exec_date\n2026-11-26,2026-11-27\n2026-11-26,2026-11-28\n",
+])
+def test_submit_rejects_missing_or_wrong_plan_before_broker(tmp_path, monkeypatch, contents):
+    from stockking.ops import kis_session
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 27, 8, 40, tzinfo=tz)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(R, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(R, "datetime", FrozenDateTime)
+    monkeypatch.setattr(kis_session, "make_client", lambda args: pytest.fail("broker accessed"))
+    if contents is not None:
+        (tmp_path / "order_plan_20261126.csv").write_text(contents, encoding="utf-8")
+    assert R.main(["submit", "--signal-date", "2026-11-26", "--operator", "test"]) == 2
+
+
+def test_zero_signal_plan_replaces_prior_csv_and_does_not_connect(tmp_path, monkeypatch):
+    from stockking.ops import kis_session
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(R, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(R, "_inputs", lambda args: ())
+    monkeypatch.setattr(R, "make_plan", lambda *args: [])
+    monkeypatch.setattr(kis_session, "make_client", lambda args: pytest.fail("broker accessed"))
+    path = tmp_path / "order_plan_20261126.csv"
+    path.write_text("signal_date,exec_date\n2026-11-26,2026-11-27\n", encoding="utf-8")
+    assert R.main(["plan", "--signal-date", "2026-11-26", "--exec-date", "2026-11-27"]) == 0
+    assert R.read_plan(path) == []
+    assert R.main(["submit", "--signal-date", "2026-11-26", "--operator", "test"]) == 0
