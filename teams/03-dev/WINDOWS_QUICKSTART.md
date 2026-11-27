@@ -142,7 +142,7 @@ $env:STOCKKING_OPERATING_CAPITAL = "auto"      # D-046 기본. 금액을 직접 
 | 08:35 | `python -m stockking.ops.connect_check` | `통과 (4/4)` | — |
 | 09:30 이후 | `python -m stockking.ops.connect_check --order` | `통과 (7/7)` — 1주 매수(현재가 −10%) 접수 → 취소 → 주문내역 확인 | C6(1건) |
 | 10:00 | `python -m stockking.ops.killswitch_drill --operator 대표 --kis` | `킬스위치 훈련: 통과 (10/10)` — 매수 차단·청산 매도 허용·주문 0건 | **C4** |
-| 10:30 | **재시작 실습** ① `python -m stockking.ops.connect_check --order` 실행 후 `4. 1주 지정가 매수 접수 … PASS` 가 보이면 즉시 **Ctrl+C** ② `python -m stockking.ops.startup_check` → `시작 가능` 또는 `미확인 주문 …` ③ 미확인이 나오면 KIS 모의(앱/HTS)에서 그 주문 상태 확인 후 `python -m stockking.ops.startup_check --resolve <주문번호> --outcome unfilled_canceled --operator 대표` ④ KIS 모의에서 남은 1주 매수 주문이 있으면 **취소** ⑤ `python -m stockking.ops.restart_drill --operator 대표` | ⑤ `재시작 복구 훈련: 통과 (9/9)` | **C5** |
+| 10:30 | **재시작 실습** ① `python -m stockking.ops.connect_check --order --hold-seconds 30` 실행 → `[실습] 접수 완료 … 30초 대기` 가 보이면 **Ctrl+C** ② `python -m stockking.ops.startup_check` → `취소 기록 없는 점검 주문 …` 으로 **시작 불가**가 나와야 정상 ③ KIS 모의(앱/HTS)에서 그 주문을 확인·취소한 뒤 `python -m stockking.ops.startup_check --resolve <주문번호> --outcome unfilled_canceled --operator 대표` ④ KIS 모의에서 남은 1주 매수 주문이 있으면 **취소** ⑤ `python -m stockking.ops.restart_drill --operator 대표` | ⑤ `재시작 복구 훈련: 통과 (9/9)` | **C5** |
 | 15:40 | `python -m stockking.ops.daily_reconcile` | `일일 대사 20261126: 통과` | **C3** |
 | 15:45 | `python -m stockking.ops.ledger_close --close` | `현금(D+2 예수금) 1원 단위 일치` PASS, `보유 수량 일치` PASS | **C1** |
 | 15:50 | `python -m stockking.ops.paper_report` | C1·C3·C4·C5 `PASS`, C2·C6 `PENDING`(1일차는 S02 없음 — 정상) | 요약 |

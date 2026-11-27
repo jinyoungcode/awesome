@@ -232,3 +232,31 @@ def test_reconcile_cancel_odno_fallback_and_chain():
     d = compare({"SK-1": "0000025951"}, rows, cancel_order_ids([{"event": "cancel_response", "cancel_odno": "0000025953"}]))
     assert d["linked_cancel_modify"] == ["25953", "25960"] and d["unknown_to_system"] == []
     assert compare({"SK-1": "0000025951"}, rows)["unknown_to_system"] == ["25953", "25960"]   # 보조 정보 없으면 수동 취급
+
+
+def test_open_check_order_blocks_until_resolved(tmp_path):
+    """C5 실습: connect_check 접수 후 취소 전 Ctrl+C → startup_check 가 열린 점검 주문을 잡고, resolve 후 해제."""
+    j = tmp_path / "j.jsonl"
+    o = {"client_order_id": "C1", "symbol": "005930", "side": "buy", "quantity": 1, "strategy_id": "connect_check"}
+    _w(j, event="order_request", order=o)
+    _w(j, event="risk_decision", client_order_id="C1", approved=True, reasons=[])
+    _w(j, event="broker_response", client_order_id="C1", accepted=True, broker_order_id="0000025951")
+    ks = KillSwitch(tmp_path / "KS")
+    rep = scan_journal(j)
+    assert set(rep.open_check_orders) == {"C1"} and not rep.unresolved
+    assert any("취소 기록 없는 점검 주문" in b for b in startup_blockers(rep, ks))
+    record_resolution(Journal(j), "C1", "unfilled_canceled", operator="대표")
+    assert startup_blockers(scan_journal(j), ks) == []
+    # 정상 흐름(취소 응답 있음)은 막지 않음
+    j2 = tmp_path / "j2.jsonl"
+    for line in j.read_text().splitlines()[:3]:
+        j2.open("a").write(line + "\n")
+    _w(j2, event="cancel_response", client_order_id="C1", accepted=True)
+    assert startup_blockers(scan_journal(j2), ks) == []
+
+
+def test_connect_check_hold_option_parses():
+    import argparse
+    from stockking.ops import connect_check
+    src = Path(connect_check.__file__).read_text(encoding="utf-8")
+    assert "--hold-seconds" in src and "모의투자 전용" in src

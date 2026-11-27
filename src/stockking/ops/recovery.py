@@ -22,12 +22,16 @@ class RecoveryReport:
     seen_order_ids: set[str] = field(default_factory=set)
     unresolved: dict[str, dict] = field(default_factory=dict)   # client_order_id -> 주문 요청 기록
     accepted: dict[str, str] = field(default_factory=dict)       # client_order_id -> 증권사 주문번호
+    open_check_orders: dict[str, dict] = field(default_factory=dict)  # 접수됐지만 취소 기록이 없는 connect_check 주문
     corrupt_lines: int = 0
 
 
 def scan_journal(paths: list[Path] | Path) -> RecoveryReport:
     rep = RecoveryReport()
     pending: dict[str, dict] = {}
+    requests: dict[str, dict] = {}
+    canceled: set[str] = set()
+    resolved: set[str] = set()
     for path in [paths] if isinstance(paths, Path) else paths:
         if not path.exists():
             continue
@@ -42,6 +46,7 @@ def scan_journal(paths: list[Path] | Path) -> RecoveryReport:
                 cid = rec["order"]["client_order_id"]
                 rep.seen_order_ids.add(cid)
                 pending[cid] = rec
+                requests[cid] = rec
             elif ev == "risk_decision" and not rec.get("approved"):
                 pending.pop(rec["client_order_id"], None)  # 관문에서 거부 → 증권사로 안 감
             elif ev == "broker_response":
@@ -53,7 +58,14 @@ def scan_journal(paths: list[Path] | Path) -> RecoveryReport:
                 pass  # 상태 불명 — pending 유지 (사람 확인 필요)
             elif ev == "manual_resolution":
                 pending.pop(rec["client_order_id"], None)
+                resolved.add(rec["client_order_id"])
+            elif ev == "cancel_response" and rec.get("accepted"):
+                canceled.add(rec["client_order_id"])
     rep.unresolved = pending
+    # connect_check 점검 주문은 '접수 → 즉시 취소'가 정상. 취소 기록 없이 끝났으면(중단 등) 증권사에 열린 주문이 남아 있을 수 있음
+    rep.open_check_orders = {cid: requests[cid] for cid in rep.accepted
+                             if cid in requests and requests[cid]["order"].get("strategy_id") == "connect_check"
+                             and cid not in canceled and cid not in resolved}
     return rep
 
 
@@ -65,6 +77,10 @@ def startup_blockers(report: RecoveryReport, kill_switch: KillSwitch) -> list[st
     for cid, rec in report.unresolved.items():
         o = rec["order"]
         blockers.append(f"미확인 주문 {cid} ({o['symbol']} {o['side']} {o['quantity']}주) — 증권사 체결조회 후 resolve 필요")
+    for cid, rec in report.open_check_orders.items():
+        o = rec["order"]
+        blockers.append(f"취소 기록 없는 점검 주문 {cid} ({o['symbol']} {o['quantity']}주, 증권사 {report.accepted.get(cid, '')}) "
+                        "— KIS 에서 취소·체결 확인 후 resolve 필요")
     if report.corrupt_lines:
         blockers.append(f"감사 로그 손상 줄 {report.corrupt_lines}개 — 원본 보존 후 확인 필요")
     return blockers

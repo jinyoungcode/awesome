@@ -36,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--symbol", default="005930")
     ap.add_argument("--order", action="store_true", help="1주 지정가 모의 주문 후 즉시 취소까지 실행")
+    ap.add_argument("--hold-seconds", type=int, default=0,
+                    help="재시작 복구 실습용: 주문 접수 후 취소 전 N초 대기(이때 Ctrl+C → 취소 안 된 점검 주문이 남음). 모의 전용")
     add_key_args(ap)
     a = ap.parse_args(argv)
     cl = Checklist("모의 계좌 연결 점검")
@@ -87,6 +89,12 @@ def main(argv: list[str] | None = None) -> int:
         return cl.finish()
 
     org_no = (kis.last_response.get("output") or {}).get("KRX_FWDG_ORD_ORGNO", "")
+    if a.hold_seconds > 0:
+        if not getattr(kis, "is_paper", False):
+            raise PermissionError("--hold-seconds 는 모의투자 전용입니다")
+        print(f"  [실습] 접수 완료(주문번호 {routed.broker_order_id}). {a.hold_seconds}초 대기 — 지금 Ctrl+C 를 누르면 "
+              "취소되지 않은 점검 주문이 남습니다. 이후 startup_check 로 확인하세요.", flush=True)
+        time.sleep(a.hold_seconds)
     time.sleep(1)
     c = kis.cancel_order(routed.broker_order_id, a.symbol, 1, krx_org_no=org_no)
     Journal(journal_path()).write("cancel_response", client_order_id=order.client_order_id,
