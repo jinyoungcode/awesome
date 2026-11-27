@@ -18,6 +18,46 @@ from .tech_orders import load_records
 RECONCILE_DIR = Path("var/reconcile")
 
 
+def c2_evidence(records: list[dict], signals: list[dict]) -> list[dict]:
+    """일별 C2 근거: 주문계획 건수, 실제 제출 건수, 국면 진단값(지수 종가·200일 평균), 일치 여부."""
+    by: dict[str, dict] = {}
+    for r in records:
+        if r.get("event") == "s02_plan":
+            by.setdefault(r["signal_date"], {}).update(
+                {"date": r["signal_date"], "plan_count": r.get("plan_count", len(r.get("rows") or [])),
+                 "regime": r.get("regime", {})})
+        elif r.get("event") == "s02_submit":
+            d = by.setdefault(r["signal_date"], {"date": r["signal_date"]})
+            d["submitted"] = d.get("submitted", 0) + 1
+    for x in signals:
+        d = by.setdefault(x["date"], {"date": x["date"]})
+        d["match"] = x.get("match")
+        d.setdefault("regime", x.get("regime", {}))
+        d.setdefault("plan_count", x.get("plan_count"))
+    for d in by.values():
+        d.setdefault("submitted", 0)
+        if "match" not in d and d.get("plan_count") == 0 and d["submitted"] == 0:
+            d["match"] = True          # D-047: 실행 신호·재현 신호 모두 0건이면 일치
+            d["match_basis"] = "D-047 둘 다 0건"
+    return [by[k] for k in sorted(by)]
+
+
+def c2_row(records: list[dict], signals: list[dict]) -> tuple[str, str, str]:
+    ev = c2_evidence(records, signals)
+    if not ev:
+        return ("C2 신호 일치 100%", "PENDING", "주문계획·신호 비교 기록 없음 (s02_runner plan/verify)")
+    parts, bad, pending = [], [], []
+    for d in ev:
+        reg = ", ".join(f"{k} {v.get('close')}/{v.get('sma200')}({'ON' if v.get('on') else 'OFF'})"
+                        for k, v in (d.get("regime") or {}).items()) or "국면 기록 없음"
+        m = d.get("match")
+        parts.append(f"{d['date']} 계획 {d.get('plan_count')}·제출 {d['submitted']} [{reg}] "
+                     f"{'일치' if m else '불일치' if m is False else '비교 전'}")
+        (bad if m is False else pending if m is None else []).append(d["date"])
+    status = "FAIL" if bad else "PENDING" if pending else "PASS"
+    return ("C2 신호 일치 100%", status, " | ".join(parts))
+
+
 def build_report(records: list[dict], reconciles: list[dict], recovery,
                  ledgers: list[dict] | None = None, signals: list[dict] | None = None) -> list[tuple[str, str, str]]:
     """(항목, 상태 PASS/FAIL/PENDING, 근거) 목록."""
@@ -29,12 +69,7 @@ def build_report(records: list[dict], reconciles: list[dict], recovery,
         bad_l = [x["date"] for x in ledgers if x.get("recon_status") != "OK"]
         rows.append(("C1 장부·잔고 대사 100%", "PASS" if not bad_l else "FAIL",
                      f"대사 {len(ledgers)}일, 불일치일 {bad_l or '없음'}"))
-    if not signals:
-        rows.append(("C2 신호 일치 100%", "PENDING", "신호 비교 기록 없음 (s02_runner verify)"))
-    else:
-        bad_s = [x["date"] for x in signals if not x.get("match")]
-        rows.append(("C2 신호 일치 100%", "PASS" if not bad_s else "FAIL",
-                     f"비교 {len(signals)}일, 불일치일 {bad_s or '없음'}"))
+    rows.append(c2_row(records, signals))
     bad = [r["date"] for r in reconciles if not r.get("passed")]
     dup_or_unknown = sum(len(r["diff"]["duplicate_broker_ids"]) + len(r["diff"]["missing_at_broker"])
                          for r in reconciles)
@@ -73,6 +108,11 @@ def main() -> int:
     for name, st, why in rows:
         print(f"  [{st:7}] {name} — {why}")
     done = all(st == "PASS" for _, st, _ in rows)
+    from datetime import date as _d
+    RECONCILE_DIR.mkdir(parents=True, exist_ok=True)
+    (RECONCILE_DIR / f"paper_report_{_d.today():%Y%m%d}.json").write_text(json.dumps(
+        {"rows": [{"item": n, "status": st, "evidence": why} for n, st, why in rows],
+         "c2_evidence": c2_evidence(records, signals)}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print("\n종합: " + ("통과" if done else "미완료 — 미통과 시 기간 연장(D-024)"))
     return 0 if done else 1
 

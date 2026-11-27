@@ -168,9 +168,9 @@ def test_t2_requires_t1_wait_and_position():
 
 
 def test_t3_and_cancel_time_rule():
-    k, j = FakeKis(price=70_000), Journal()
+    k, j = FakeKis(price=30_000), Journal()
     tech_orders.run_scenario("T3", k, j, "005930", "op", [], mode=TradingMode.PAPER)
-    assert k.sent[0].limit_price == 63_000
+    assert k.sent[0].limit_price == 27_000
     with pytest.raises(RuntimeError, match="15:15"):
         tech_orders.run_scenario("T3-cancel", k, j, None, "op", j.records,
                                  now=datetime(2026, 11, 27, 15, 0), mode=TradingMode.PAPER)
@@ -179,11 +179,17 @@ def test_t3_and_cancel_time_rule():
     assert k.canceled == [("0000001", "06010")]
 
 
-def test_t4_t5_pending():
-    for s in ("T4", "T5"):
-        with pytest.raises(NotImplementedError):
-            tech_orders.run_scenario(s, FakeKis(), Journal(), "AAPL", "op", [], mode=TradingMode.PAPER)
-
+def test_t4_pending_t5_through_gate():
+    with pytest.raises(NotImplementedError):
+        tech_orders.run_scenario("T4", FakeKis(), Journal(), "AAPL", "op", [], mode=TradingMode.PAPER)
+    # 15만 원: 목표 30,000 → T5 '목표 초과' 1주 35,000원(23.3% ≤ 30.1%, 손실 2,800 ≤ 3,000) 통과
+    k = FakeKis(price=35_000)
+    msg = tech_orders.run_scenario("T5", k, Journal(), "000500", "op", [], mode=TradingMode.PAPER)
+    assert "submitted" in msg and k.sent[0].sizing_exception == "ONE_SHARE_OVER" and k.sent[0].quantity == 1
+    # 목표 범위 안 가격은 예외 불필요 → 관문 거부
+    k2 = FakeKis(price=30_000)
+    assert "rejected_by_risk" in tech_orders.run_scenario("T5", k2, Journal(), "000500", "op", [],
+                                                          mode=TradingMode.PAPER) and not k2.sent
 
 def test_trigger_status():
     def req(cid, sid, side):
@@ -267,3 +273,42 @@ def test_ledger_open_fixes_auto_capital(tmp_path, monkeypatch):
     st = json.loads((tmp_path / "var/ledger/paper/2026/open_state_20261126.json").read_text(encoding="utf-8"))
     assert st["principal"] == 5_000_000
     assert json.loads((tmp_path / "cap.json").read_text(encoding="utf-8"))["capital"] == 5_000_000
+
+
+def test_t1_qty_from_target_and_dry_run_sends_nothing(tmp_path):
+    cand = tmp_path / "tech_candidates.csv"
+    cand.write_text("role,rank,symbol,market,price,adv20\nT1,1,000660,KOSPI,15000,1\nT1,2,035420,KOSPI,9800,1\n"
+                    "T5,1,000500,KOSPI,35000,1\n", encoding="utf-8")
+    c = tech_orders.load_candidates(cand)
+    assert tech_orders.pick_symbol("T1", c) == "000660" and tech_orders.pick_symbol("T3", c) == "035420"
+    assert tech_orders.pick_symbol("T5", c) == "000500" and tech_orders.pick_symbol("T1", c, rank=3) is None
+    k, j = FakeKis(price=15_000), Journal()
+    msg = tech_orders.run_scenario("T1", k, j, "000660", "op", [], mode=TradingMode.PAPER, dry_run=True)
+    assert "[dry-run]" in msg and "2주" in msg and "관문 통과" in msg and not k.sent
+    msg2 = tech_orders.run_scenario("T1", k, j, "000660", "op", [], mode=TradingMode.PAPER)
+    assert "submitted" in msg2 and k.sent[0].quantity == 2 and k.sent[0].order_target == 30_000
+
+
+def test_status_lines():
+    recs = [{"event": "tech_order", "scenario": "T1", "symbol": "000660", "qty": 2, "accepted": True,
+             "broker_order_id": "0000000001"}]
+    rows = [{"odno": "1", "filled_qty": 2, "ord_qty": 2, "canceled": False}]
+    assert "체결 2/2주" in tech_orders.status_lines(recs, rows)[0]
+
+
+def test_dry_run_paper_only():
+    with pytest.raises(tech_orders.TechOrdersForbidden):
+        tech_orders.run_scenario("T1", FakeKis(), Journal(), "000660", "op", [], mode=TradingMode.LIVE, dry_run=True)
+
+
+def test_t3_cancel_cancels_all_open_t3():
+    from datetime import datetime as dt
+    k, j = FakeKis(price=30_000), Journal()
+    tech_orders.run_scenario("T3", k, j, "000660", "op", [], mode=TradingMode.PAPER)
+    tech_orders.run_scenario("T3", k, j, "035420", "op", j.records, mode=TradingMode.PAPER)
+    msg = tech_orders.run_scenario("T3-cancel", k, j, None, "op", j.records, now=dt(2026, 11, 30, 15, 16),
+                                   mode=TradingMode.PAPER)
+    assert len(k.canceled) == 2 and "000660" in msg and "035420" in msg
+    with pytest.raises(RuntimeError, match="취소할 T3"):
+        tech_orders.run_scenario("T3-cancel", k, j, None, "op", j.records, now=dt(2026, 11, 30, 15, 17),
+                                 mode=TradingMode.PAPER)

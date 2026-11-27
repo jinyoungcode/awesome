@@ -34,11 +34,10 @@ from .common import JOURNAL_DIR, journal_path
 
 REASON_CODE = "T_TECH"
 STRATEGY_ID = "T_TECH"
-T1_MAX_PRICE = 20_000          # T1: 1주 2만원 이하
 T2_MIN_WAIT = timedelta(minutes=30)
 T3_DISCOUNT = 0.90
 T3_CANCEL_AFTER = (15, 15)
-PENDING_AFTER_PR2 = {"T4": "미국 주문(PR #2) 병합 후", "T5": "1주 예외(D-021/D-025) 구현 후"}
+PENDING_AFTER_PR2 = {"T4": "T0·모의는 국내만(D-033) — 이번 점검 범위 밖"}
 
 
 class TechOrdersForbidden(PermissionError):
@@ -95,8 +94,49 @@ def _tech_records(records: list[dict], scenario: str) -> list[dict]:
     return [r for r in records if r.get("event") == "tech_order" and r.get("scenario") == scenario]
 
 
+def load_candidates(path: str | Path) -> dict[str, list[dict]]:
+    """자료팀 tech_candidates.csv (role,rank,symbol,market,price,adv20) → {role: [행, rank 오름차순]}."""
+    import csv
+    out: dict[str, list[dict]] = {}
+    with open(path, encoding="utf-8-sig") as fh:
+        for r in csv.DictReader(fh):
+            r["symbol"] = str(r["symbol"]).strip().zfill(6)
+            out.setdefault(r["role"].strip().upper(), []).append(r)
+    for rows in out.values():
+        rows.sort(key=lambda r: int(r.get("rank") or 99))
+    return out
+
+
+def pick_symbol(scenario: str, candidates: dict[str, list[dict]] | None, rank: int = 1) -> str | None:
+    """T1·T2 → role=T1, T5 → role=T5, T3 → T1 후보 중 다른 종목(rank+1) (PAPER_DATA_HOWTO §5)."""
+    if not candidates:
+        return None
+    role, idx = {"T1": ("T1", rank), "T2": ("T1", rank), "T5": ("T5", rank), "T3": ("T1", rank + 1)}.get(scenario, (None, 0))
+    rows = candidates.get(role or "", [])
+    return rows[idx - 1]["symbol"] if 0 < idx <= len(rows) else None
+
+
+def _tech_snapshot(kis, symbol: str):
+    """점검 주문은 운용 금액(D-044/D-046) 기준으로 비중·손실·D-005 목표를 계산한다."""
+    from ..risk.stages import operating_capital
+    from ..sizing import order_target
+    q, bal = kis.inquire_price(symbol), kis.inquire_balance()
+    broker_cash = bal.get("cash_d2") or bal["cash"]
+    if (err := capital_error(broker_cash)):
+        raise RuntimeError(err)
+    capital = operating_capital()
+    positions = {s: Position(s, qty, avg) for s, (qty, avg) in bal["positions"].items()}
+    held_value = sum(p.quantity * q["price"] if s == symbol else 0 for s, p in positions.items())
+    snap = AccountSnapshot(min(broker_cash, capital), positions, {symbol: q["price"]}, capital + held_value,
+                           principal=None)
+    return q, positions, snap, order_target(capital, 0)
+
+
 def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, operator: str,
-                 records: list[dict], now: datetime | None = None, mode: TradingMode | None = None) -> str:
+                 records: list[dict], now: datetime | None = None, mode: TradingMode | None = None,
+                 dry_run: bool = False) -> str:
+    """D-027 점검 주문 1건. dry_run=True 면 리스크 관문 판정만 하고 증권사로 보내지 않는다."""
+    from ..sizing import shares_for_target
     assert_paper_only(mode or config.resolve_mode(), kis)
     if not operator:
         raise ValueError("실행자(operator)를 기록해야 합니다")
@@ -104,34 +144,39 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
         raise NotImplementedError(f"{scenario}: {PENDING_AFTER_PR2[scenario]}")
     now = now or datetime.now()
 
-    if scenario == "T3-cancel":
-        t3 = _tech_records(records, "T3")
-        if not t3 or not t3[-1].get("broker_order_id"):
+    if scenario == "T3-cancel":   # 15:15 이후, 아직 취소 안 한 T3 전부 취소 (T3 를 여러 종목에 낸 경우 포함)
+        done = {r.get("broker_order_id") for r in _tech_records(records, "T3-cancel") if r.get("accepted")}
+        t3 = [r for r in _tech_records(records, "T3") if r.get("accepted") and r.get("broker_order_id")
+              and r["broker_order_id"] not in done]
+        if not t3:
             raise RuntimeError("취소할 T3 주문 기록이 없습니다")
         if (now.hour, now.minute) < T3_CANCEL_AFTER:
             raise RuntimeError("T3 취소는 15:15 이후 실행합니다")
-        r = t3[-1]
-        c = kis.cancel_order(r["broker_order_id"], r["symbol"], 1, krx_org_no=r.get("krx_org_no"))
-        journal.write("tech_order", scenario="T3-cancel", reason_code=REASON_CODE, operator=operator,
-                      symbol=r["symbol"], broker_order_id=r["broker_order_id"], cancel_odno=c.broker_order_id,
-                      accepted=c.accepted, message=c.message)
-        return f"T3 취소 {'성공' if c.accepted else '실패'}: {c.message}"
+        if dry_run:
+            return "[dry-run] T3-cancel 대상: " + ", ".join(f"{r['symbol']}({r['broker_order_id']})" for r in t3)
+        out = []
+        for r in t3:
+            c = kis.cancel_order(r["broker_order_id"], r["symbol"], 1, krx_org_no=r.get("krx_org_no"))
+            journal.write("tech_order", scenario="T3-cancel", reason_code=REASON_CODE, operator=operator,
+                          symbol=r["symbol"], broker_order_id=r["broker_order_id"], cancel_odno=c.broker_order_id,
+                          accepted=c.accepted, message=c.message)
+            out.append(f"{r['symbol']} {'성공' if c.accepted else '실패'}: {c.message}")
+        return "T3 취소 " + " / ".join(out)
 
     if not symbol:
-        raise ValueError("--symbol 이 필요합니다")
-    q, bal = kis.inquire_price(symbol), kis.inquire_balance()
-    positions = {s: Position(s, qty, avg) for s, (qty, avg) in bal["positions"].items()}
-    equity = bal["total_equity"] or bal["cash"]
-    if (err := capital_error(bal.get("cash_d2") or bal["cash"])):
-        raise RuntimeError(err)
-    snap = AccountSnapshot(bal["cash"], positions, {symbol: q["price"]}, equity)
+        raise ValueError("--symbol 또는 --candidates 가 필요합니다")
+    q, positions, snap, target = _tech_snapshot(kis, symbol)
     limits = limits_for(resolve_stage())
+    price = q["price"]
 
-    if scenario == "T1":
-        if q["price"] > T1_MAX_PRICE:
-            raise ValueError(f"T1 대상은 1주 {T1_MAX_PRICE:,}원 이하 (현재 {q['price']:,}원)")
-        order = OrderRequest(symbol, Side.BUY, 1, OrderType.LIMIT, q["price"], STRATEGY_ID)
-    elif scenario == "T2":
+    if scenario == "T1":   # 국내 매수: D-005 목표의 90~110% 정수 수량 (PAPER_3DAY_CHECK §6.2)
+        qty = shares_for_target(price, target)
+        if qty is None:
+            raise ValueError(f"T1: {symbol} {price:,}원으로는 목표 {target:,}원의 90~110%를 정수 수량으로 못 맞춤 "
+                             "— 후보 rank 2 를 쓰세요(--rank 2)")
+        order = OrderRequest(symbol, Side.BUY, qty, OrderType.LIMIT, price, STRATEGY_ID,
+                             stop_price=round(price * 0.92, 2), order_target=target)
+    elif scenario == "T2":   # T1 보유분 전량 매도 (청산 경로·매도세)
         t1 = [r for r in _tech_records(records, "T1") if r.get("symbol") == symbol and r.get("accepted")]
         if not t1:
             raise RuntimeError("같은 종목의 T1 접수 기록이 없습니다")
@@ -139,45 +184,81 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
             raise RuntimeError("T2 는 T1 이후 30분 이상 지나서 실행합니다")
         held = positions.get(symbol)
         if not held or held.quantity < 1:
-            raise RuntimeError("T1 보유분이 아직 없습니다(미체결) — 체결 확인 후 실행")
-        # T2 목적 = 국내 시장가 매도 경로 점검(KIS 모의 지원 여부 확인 겸). 미지원이면 시장성 지정가 모드로 재실행
+            raise RuntimeError("T1 보유분이 아직 없습니다(미체결) — --status 로 체결 확인 후 실행")
         if os.environ.get("STOCKKING_KR_SELL_MODE", "market").lower() == "marketable_limit":
-            order = OrderRequest(symbol, Side.SELL, 1, OrderType.LIMIT, marketable_sell_limit(q["base_price"] or q["price"]),
-                                 STRATEGY_ID, exit_reason="X_TECH")
+            order = OrderRequest(symbol, Side.SELL, held.quantity, OrderType.LIMIT,
+                                 marketable_sell_limit(q["base_price"] or price), STRATEGY_ID, exit_reason="X_TECH")
         else:
-            order = OrderRequest(symbol, Side.SELL, 1, OrderType.MARKET, None, STRATEGY_ID, exit_reason="X_TECH")
-        limits = replace(limits, allow_market_orders=True)  # 관문은 그대로 통과해야 함(국내·매도·사유 코드 검사)
-    elif scenario == "T3":
-        order = OrderRequest(symbol, Side.BUY, 1, OrderType.LIMIT, floor_to_tick(int(q["price"] * T3_DISCOUNT)),
-                             STRATEGY_ID)
+            order = OrderRequest(symbol, Side.SELL, held.quantity, OrderType.MARKET, None, STRATEGY_ID,
+                                 exit_reason="X_TECH")
+        limits = replace(limits, allow_market_orders=True)  # 관문은 그대로(국내·매도·사유 코드·보유 이내)
+    elif scenario == "T3":   # −10% 지정가 1주 → 15:15 취소
+        order = OrderRequest(symbol, Side.BUY, 1, OrderType.LIMIT, floor_to_tick(int(price * T3_DISCOUNT)), STRATEGY_ID)
+    elif scenario == "T5":   # 1주 예외 '목표 초과'(D-021/D-025/D-036) — 관문이 종류·가격 30%·동시 1개·손실 2% 재검사
+        order = OrderRequest(symbol, Side.BUY, 1, OrderType.LIMIT, price, STRATEGY_ID,
+                             stop_price=round(price * 0.92, 2), order_target=target, sizing_exception="ONE_SHARE_OVER")
     else:
         raise ValueError(f"알 수 없는 시나리오: {scenario}")
 
-    router = OrderRouter(kis, RiskGate(limits, kill_switch=KillSwitch()), journal, TradingMode.PAPER)
-    routed = router.submit(order, snap, reference_price=q["base_price"] or q["price"])
+    gate = RiskGate(limits, kill_switch=KillSwitch())
+    if dry_run:
+        d = gate.check(order, snap, reference_price=q["base_price"] or price)
+        journal.write("tech_dry_run", scenario=scenario, symbol=symbol, qty=order.quantity, price=order.limit_price,
+                      approved=d.approved, reasons=list(d.reasons), operator=operator)
+        verdict = "관문 통과" if d else "관문 거부: " + "; ".join(d.reasons)
+        return (f"[dry-run] {scenario} {order.side.value} {symbol} {order.quantity}주 "
+                f"{'시장가' if order.order_type is OrderType.MARKET else f'{order.limit_price:,}원'} → {verdict} (전송 안 함)")
+    router = OrderRouter(kis, gate, journal, TradingMode.PAPER)
+    routed = router.submit(order, snap, reference_price=q["base_price"] or price)
     org = ((getattr(kis, "last_response", {}) or {}).get("output") or {}).get("KRX_FWDG_ORD_ORGNO", "")
     journal.write("tech_order", scenario=scenario, reason_code=REASON_CODE, operator=operator, symbol=symbol,
-                  client_order_id=order.client_order_id, accepted=routed.status is OrderStatus.SUBMITTED,
+                  qty=order.quantity, client_order_id=order.client_order_id,
+                  accepted=routed.status is OrderStatus.SUBMITTED,
                   broker_order_id=routed.broker_order_id, krx_org_no=org, message=routed.message)
-    return f"{scenario} {routed.status.value}: 주문번호 {routed.broker_order_id} {routed.message}"
+    return f"{scenario} {routed.status.value}: {symbol} {order.quantity}주 주문번호 {routed.broker_order_id} {routed.message}"
+
+
+def status_lines(records: list[dict], broker_rows: list[dict]) -> list[str]:
+    """오늘 점검 주문의 접수·체결·취소 상태 (--status)."""
+    by = {str(r["odno"]).lstrip("0"): r for r in broker_rows}
+    lines = []
+    for r in records:
+        if r.get("event") != "tech_order" or r.get("scenario") == "T3-cancel":
+            continue
+        b = by.get(str(r.get("broker_order_id") or "").lstrip("0"))
+        state = "미접수" if not r.get("accepted") else ("내역 없음" if not b else
+                 f"체결 {b['filled_qty']}/{b['ord_qty']}주" + (" · 취소" if b.get("canceled") else ""))
+        lines.append(f"{r['scenario']:3} {r['symbol']} {r.get('qty', '')}주 주문번호 {r.get('broker_order_id')} → {state}")
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--run", choices=["T1", "T2", "T3", "T3-cancel", "T4", "T5"])
-    ap.add_argument("--symbol")
+    ap.add_argument("--status", action="store_true", help="오늘 점검 주문 접수·체결·취소 상태")
+    ap.add_argument("--dry-run", action="store_true", help="관문 판정만, 증권사로 보내지 않음")
+    ap.add_argument("--candidates", help="자료팀 tech_candidates.csv 경로 (T1·T2·T3·T5 종목 자동 선택)")
+    ap.add_argument("--rank", type=int, default=1, help="후보 순위 (1순위 불가 시 2)")
+    ap.add_argument("--symbol", help="종목 직접 지정 (후보 파일보다 우선)")
     ap.add_argument("--operator", default="")
     from .kis_session import add_key_args, make_client
     add_key_args(ap)
     a = ap.parse_args(argv)
     records = load_records()
+    if a.status:
+        kis = make_client(a)
+        for line in status_lines(records, kis.inquire_daily_orders(datetime.now().strftime("%Y%m%d"))) or ["점검 주문 기록 없음"]:
+            print(line)
+        return 0
     if a.check or not a.run:
         st = trigger_status(records)
         print(json.dumps(st, ensure_ascii=False, indent=2))
-        print("→ 3일차 점검용 주문 실행 필요" if st["run_tech_orders"] else "→ 점검용 주문 불필요")
+        print("→ 점검용 주문 실행 필요" if st["run_tech_orders"] else "→ 점검용 주문 불필요")
         return 0
-    print(run_scenario(a.run, make_client(a), Journal(journal_path()), a.symbol, a.operator, records))
+    symbol = a.symbol or pick_symbol(a.run, load_candidates(a.candidates) if a.candidates else None, a.rank)
+    print(run_scenario(a.run, make_client(a), Journal(journal_path()), symbol, a.operator, records,
+                       dry_run=a.dry_run))
     return 0
 
 

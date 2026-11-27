@@ -164,3 +164,10 @@
 
 - 프로그램팀 → 총괄 직접 메시지가 보안 정책으로 차단됨 → 대표 지시(중계 없이 직접 공유)에 따라 회신은 `teams/01-hq/INBOX.md`(이 브랜치) + PR #6 댓글로 남김. 총괄 → 프로그램팀은 send_message 그대로
 - C3: 9f5241b(대표 PC) 채택 + 8341346(cancel_odno 기록·보조 매칭) push
+
+## 2026-11-27 — D-047 대응 (11/30 점검 주문으로 C6)
+
+- tech_orders: 자료팀 `tech_candidates.csv`(--candidates, --rank) 종목 선택, T1 수량 = D-005 목표 90~110%(운용 금액 기준), T2 = T1 보유 전량, T5 = 1주 예외 OVER(관문 재검사), `--dry-run`(관문 판정만·전송 0), `--status`(체결 확인), T3-cancel 은 남은 T3 전부. T4 는 D-033 으로 제외
+- paper_report C2: 일별 계획·제출 건수 + 국면 진단(지수 종가/200일 평균/ON·OFF), D-047(둘 다 0건이면 일치) 반영, `var/reconcile/paper_report_날짜.json` 저장. s02_runner plan 이 국면 진단을 출력·기록
+- 절차서 `TECH_ORDERS_1130.md`. ⚠ C6 5건: T4 제외로 점검 주문 최대 4건 → 5번째 결정 필요(총괄·매매팀)
+- 205 passed

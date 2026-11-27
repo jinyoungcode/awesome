@@ -69,6 +69,9 @@ def book_equity(state: dict, prices: dict[str, int]) -> int:
 
 
 # ---------------- plan ----------------
+regime_diag: dict = {}   # 마지막 make_plan 의 국면 진단값 (C2 근거, D-047)
+
+
 def make_plan(state: dict, bars, universe: set[str], markets: dict[str, str], index_bars,
               signal_date: date, exec_date: date, params: S02Params = S02Params()):
     history: dict[str, list] = {}
@@ -79,6 +82,13 @@ def make_plan(state: dict, bars, universe: set[str], markets: dict[str, str], in
     for b in sorted(index_bars, key=lambda x: x.date):
         if b.date <= signal_date:
             idx_close.setdefault(b.symbol, []).append(float(b.close))
+
+    regime_diag.clear()
+    for idx_name, closes in sorted(idx_close.items()):
+        ma = sma(closes, 200)
+        regime_diag[idx_name] = {"close": closes[-1] if closes else None,
+                                 "sma200": round(ma, 2) if ma is not None else None,
+                                 "on": bool(ma is not None and closes and closes[-1] > ma), "bars": len(closes)}
 
     def regime_on(sym: str) -> bool:
         closes = idx_close.get(INDEX_OF.get(markets.get(sym, ""), ""), [])
@@ -317,13 +327,17 @@ def main(argv: list[str] | None = None) -> int:
         rows = make_plan(state, *_inputs(a), sd, ed)
         if a.action == "plan":
             out = write_order_plan(rows, PLAN_DIR, signal_date=sd)
-            journal.write("s02_plan", signal_date=sd.isoformat(), rows=[asdict(r) for r in rows])
+            journal.write("s02_plan", signal_date=sd.isoformat(), rows=[asdict(r) for r in rows],
+                          plan_count=len(rows), regime=dict(regime_diag))
+            for name, d in regime_diag.items():
+                print(f"  국면 {name}: 종가 {d['close']} / 200일 평균 {d['sma200']} → {'ON' if d['on'] else 'OFF'}")
             print(f"주문계획 {len(rows)}건 → {out}")
             return 0
         rep = compare_signals(rows, submitted(load_records(), sd.isoformat()))
         out = Path("var/reconcile") / f"signal_{sd:%Y%m%d}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps({"date": sd.isoformat(), **rep}, ensure_ascii=False, indent=2, default=str),
+        out.write_text(json.dumps({"date": sd.isoformat(), **rep, "plan_count": len(rows), "regime": dict(regime_diag)},
+                                  ensure_ascii=False, indent=2, default=str),
                        encoding="utf-8")
         print(f"C2 신호 일치: {'일치' if rep['match'] else '불일치'} (누락 {rep['missing']}, 초과 {rep['extra']})")
         return 0 if rep["match"] else 1

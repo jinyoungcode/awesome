@@ -282,3 +282,16 @@ def test_zero_signal_plan_replaces_prior_csv_and_does_not_connect(tmp_path, monk
     assert R.main(["plan", "--signal-date", "2026-11-26", "--exec-date", "2026-11-27"]) == 0
     assert R.read_plan(path) == []
     assert R.main(["submit", "--signal-date", "2026-11-26", "--operator", "test"]) == 0
+
+
+def test_c2_evidence_regime_and_d047_zero_plans():
+    from stockking.ops.paper_report import c2_row
+    R.make_plan(state(), *fixture(), SD, ED)
+    assert R.regime_diag["KOSPI200"]["on"] is True and R.regime_diag["KOSPI200"]["sma200"] is not None
+    recs = [{"event": "s02_plan", "signal_date": "2026-11-26", "rows": [], "plan_count": 0,
+             "regime": {"KOSPI200": {"close": 300.0, "sma200": 320.5, "on": False}}}]
+    name, st, why = c2_row(recs, [])
+    assert st == "PASS" and "계획 0·제출 0" in why and "KOSPI200 300.0/320.5(OFF)" in why   # D-047
+    recs.append({"event": "s02_plan", "signal_date": "2026-11-27", "rows": [{}], "plan_count": 1, "regime": {}})
+    assert c2_row(recs, [])[1] == "PENDING"                                  # 계획 있는데 비교 전
+    assert c2_row(recs, [{"date": "2026-11-27", "match": False}])[1] == "FAIL"
