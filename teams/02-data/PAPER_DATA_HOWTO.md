@@ -94,6 +94,8 @@ S02 0건 원인이 국면 필터(지수 > 200일 평균) OFF이고, KIS 모의 �
 
 **1차 결과 (11/27, PC 세션):** KOSPI200·KOSDAQ150 각 279행, KIS 하루 재조회 **불일치 0건** → 자료팀 구간 합치기는 정상, 값은 KIS 모의 원천 그대로. 급변(8% 초과) KOSPI200 12일·KOSDAQ150 10일이 실제 시장인지는 KRX 대조(2)로 판정.
 
+**2차 결과 (11/27, PC 세션): KRX 공표값과 최대 오차 0.0%** (KOSPI200·KOSDAQ150, 2025-10-01~2026-11-27 각 281일). → **KIS 모의 지수는 실제 시장값.** 급변일도 실제 시장 움직임이며, S02 0건(국면 OFF)은 데이터 오류가 아니라 실제 시장 국면 때문. `index-from-krx`는 사용하지 않음. (자료팀이 앞서 "실제 시장으로 보기 어렵다"고 한 의견은 틀렸음 — 정정)
+
 **2-1) KRX 값이 다르면 — 대체 index.csv 만들기 (10초)**
 ```powershell
 & $PY $COL index-from-krx --krx-kospi200 "$env:USERPROFILE\stockking-data\krx_kospi200.csv" --krx-kosdaq150 "$env:USERPROFILE\stockking-data\krx_kosdaq150.csv" --out "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27\index.csv"
