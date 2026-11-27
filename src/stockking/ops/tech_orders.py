@@ -8,6 +8,7 @@ python -m stockking.ops.tech_orders --run T1 --symbol 000000 --operator 대표  
 python -m stockking.ops.tech_orders --run T2 --symbol 000000 --operator 대표   # T1 보유분 시장가 매도 (체결 30분 후)
 python -m stockking.ops.tech_orders --run T3 --symbol 005930 --operator 대표   # -10% 지정가 매수
 python -m stockking.ops.tech_orders --run T3-cancel --operator 대표            # 15:15 이후 T3 잔량 취소
+python -m stockking.ops.tech_orders --run T1-cancel --operator 대표            # 10:00까지 미체결 T1 취소
 
 T4(미국)·T5(1주 예외)는 PR #2(미국 주문·사이징) 병합 후 추가한다.
 """
@@ -37,6 +38,7 @@ STRATEGY_ID = "T_TECH"
 T2_MIN_WAIT = timedelta(minutes=30)
 T3_DISCOUNT = 0.90
 T3_CANCEL_AFTER = (15, 15)
+CANCEL_SCENARIOS = {"T3-cancel": "T3", "T1-cancel": "T1"}
 PENDING_AFTER_PR2 = {"T4": "T0·모의는 국내만(D-033) — 이번 점검 범위 밖"}
 
 
@@ -113,6 +115,8 @@ def pick_symbol(scenario: str, candidates: dict[str, list[dict]] | None, rank: i
         return None
     role, idx = {"T1": ("T1", rank), "T2": ("T1", rank), "T5": ("T5", rank), "T3": ("T1", rank + 1)}.get(scenario, (None, 0))
     rows = candidates.get(role or "", [])
+    if scenario == "T5":   # 총괄 결정(11/27): in_band=False 후보는 T5 에 쓰지 않는다
+        rows = [r for r in rows if str(r.get("in_band", "")).strip().lower() not in {"false", "0", "n", "no"}]
     return rows[idx - 1]["symbol"] if 0 < idx <= len(rows) else None
 
 
@@ -144,27 +148,29 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
         raise NotImplementedError(f"{scenario}: {PENDING_AFTER_PR2[scenario]}")
     now = now or datetime.now()
 
-    if scenario == "T3-cancel":   # 15:15 이후, 아직 취소 안 한 T3 전부 취소 (T3 를 여러 종목에 낸 경우 포함)
-        done = {r.get("broker_order_id") for r in _tech_records(records, "T3-cancel") if r.get("accepted")}
-        t3 = [r for r in _tech_records(records, "T3") if r.get("accepted") and r.get("broker_order_id")
-              and r["broker_order_id"] not in done]
-        if not t3:
-            raise RuntimeError("취소할 T3 주문 기록이 없습니다")
-        if (now.hour, now.minute) < T3_CANCEL_AFTER:
+    if scenario in CANCEL_SCENARIOS:   # T3-cancel: 15:15 이후 T3 전부 / T1-cancel: 미체결 T1 (시간 제한 없음)
+        src = CANCEL_SCENARIOS[scenario]
+        done = {r.get("broker_order_id") for r in _tech_records(records, scenario) if r.get("accepted")}
+        targets = [r for r in _tech_records(records, src) if r.get("accepted") and r.get("broker_order_id")
+                   and r["broker_order_id"] not in done]
+        if not targets:
+            raise RuntimeError(f"취소할 {src} 주문 기록이 없습니다")
+        if scenario == "T3-cancel" and (now.hour, now.minute) < T3_CANCEL_AFTER:
             raise RuntimeError("T3 취소는 15:15 이후 실행합니다")
         if dry_run:
-            return "[dry-run] T3-cancel 대상: " + ", ".join(f"{r['symbol']}({r['broker_order_id']})" for r in t3)
+            return f"[dry-run] {scenario} 대상: " + ", ".join(f"{r['symbol']}({r['broker_order_id']})" for r in targets)
         out = []
-        for r in t3:
-            c = kis.cancel_order(r["broker_order_id"], r["symbol"], 1, krx_org_no=r.get("krx_org_no"))
-            journal.write("tech_order", scenario="T3-cancel", reason_code=REASON_CODE, operator=operator,
+        for r in targets:   # 미체결 잔량 전량 취소(QTY_ALL_ORD_YN=Y). 이미 체결된 주문은 증권사가 거부 → 메시지 확인
+            c = kis.cancel_order(r["broker_order_id"], r["symbol"], int(r.get("qty") or 1), krx_org_no=r.get("krx_org_no"))
+            journal.write("tech_order", scenario=scenario, reason_code=REASON_CODE, operator=operator,
                           symbol=r["symbol"], broker_order_id=r["broker_order_id"], cancel_odno=c.broker_order_id,
                           accepted=c.accepted, message=c.message)
             out.append(f"{r['symbol']} {'성공' if c.accepted else '실패'}: {c.message}")
-        return "T3 취소 " + " / ".join(out)
+        return f"{src} 취소 " + " / ".join(out)
 
     if not symbol:
-        raise ValueError("--symbol 또는 --candidates 가 필요합니다")
+        raise ValueError(f"{scenario}: 쓸 종목이 없습니다 — 후보 파일에 해당 순위 후보가 없거나(T5 는 in_band=False 제외) "
+                         "--candidates/--symbol 이 빠졌습니다. T5 면 '해당 없음'으로 기록하고 건너뜁니다")
     q, positions, snap, target = _tech_snapshot(kis, symbol)
     limits = limits_for(resolve_stage())
     price = q["price"]
@@ -223,7 +229,7 @@ def status_lines(records: list[dict], broker_rows: list[dict]) -> list[str]:
     by = {str(r["odno"]).lstrip("0"): r for r in broker_rows}
     lines = []
     for r in records:
-        if r.get("event") != "tech_order" or r.get("scenario") == "T3-cancel":
+        if r.get("event") != "tech_order" or r.get("scenario") in CANCEL_SCENARIOS:
             continue
         b = by.get(str(r.get("broker_order_id") or "").lstrip("0"))
         state = "미접수" if not r.get("accepted") else ("내역 없음" if not b else
@@ -235,7 +241,7 @@ def status_lines(records: list[dict], broker_rows: list[dict]) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--run", choices=["T1", "T2", "T3", "T3-cancel", "T4", "T5"])
+    ap.add_argument("--run", choices=["T1", "T1-cancel", "T2", "T3", "T3-cancel", "T4", "T5"])
     ap.add_argument("--status", action="store_true", help="오늘 점검 주문 접수·체결·취소 상태")
     ap.add_argument("--dry-run", action="store_true", help="관문 판정만, 증권사로 보내지 않음")
     ap.add_argument("--candidates", help="자료팀 tech_candidates.csv 경로 (T1·T2·T3·T5 종목 자동 선택)")

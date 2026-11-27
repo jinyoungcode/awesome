@@ -87,7 +87,7 @@ def test_data_qc_fail_only_exits(tmp_path):
                             [HeldPosition("A", 2, 92.0, 1)], set(), data_qc_ok=False)
     assert [(r.side, r.order_type, r.reason_code) for r in plan] == [("SELL", "MOO", "X_STOP")]
     out = write_order_plan(plan, tmp_path)
-    assert out.name == "order_plan_20250830.csv" and "X_STOP" in out.read_text()
+    assert out.name == "order_plan_20250830.csv" and "X_STOP" in out.read_text(encoding="utf-8")
 
 
 # ---------- 장부 ----------

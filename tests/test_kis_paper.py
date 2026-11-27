@@ -70,7 +70,7 @@ def test_token_reused_across_processes(tmp_path):
     c2, calls2 = _tclient(cache)            # 새 프로세스(새 객체)
     c2.inquire_price("005930")
     assert sum(u.endswith("tokenP") for u in calls1) == 1 and not any(u.endswith("tokenP") for u in calls2)
-    saved = cache.read_text()
+    saved = cache.read_text(encoding="utf-8")
     assert "TOK-k" in saved and '"k"' not in saved and "appsecret" not in saved   # 앱키·시크릿은 저장 안 함
     if _os.name == "posix":
         assert (cache.stat().st_mode & 0o077) == 0
@@ -82,9 +82,9 @@ def test_token_cache_ignored_for_other_key_or_expired(tmp_path):
     c, calls = _tclient(cache, key="other")
     c.inquire_price("005930")
     assert any(u.endswith("tokenP") for u in calls)        # 다른 앱키 → 재발급
-    d = _json.loads(cache.read_text())
+    d = _json.loads(cache.read_text(encoding="utf-8"))
     d["expires_at"] = _time.time() + 30                     # 만료 60초 이내 → 재발급
-    cache.write_text(_json.dumps(d))
+    cache.write_text(_json.dumps(d), encoding="utf-8")
     c3, calls3 = _tclient(cache, key="other")
     c3.inquire_price("005930")
     assert any(u.endswith("tokenP") for u in calls3)

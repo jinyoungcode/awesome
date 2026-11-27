@@ -32,7 +32,7 @@ def test_kill_switch_blocks_everything(tmp_path):
 def test_kill_switch_file_from_outside(tmp_path):
     f = tmp_path / "KS"
     gate = RiskGate(kill_switch=KillSwitch(f))
-    f.write_text("ops touched it")
+    f.write_text("ops touched it", encoding="utf-8")
     assert not gate.check(buy(), snap())
 
 
@@ -117,8 +117,8 @@ def test_exception_fails_closed():
 
 def test_memory_only_kill_switch_ignores_file(tmp_path):
     f = tmp_path / "KS"
-    f.write_text("live ops halt")
+    f.write_text("live ops halt", encoding="utf-8")
     ks = KillSwitch(f, memory_only=True)
     assert not ks.is_tripped()
     ks.trip("bt")
-    assert f.read_text() == "live ops halt"
+    assert f.read_text(encoding="utf-8") == "live ops halt"

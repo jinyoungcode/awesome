@@ -39,7 +39,7 @@ def test_scan_journal_classifies_orders(tmp_path):
     _w(j, event="risk_decision", client_order_id="C", approved=True, reasons=[])
     _w(j, event="broker_error", client_order_id="C", error="timeout")
     _w(j, event="order_request", order=_order("D"))  # 응답 전 다운
-    j.open("a").write('{"event": "order_req')       # 잘린 마지막 줄
+    j.open("a", encoding="utf-8").write('{"event": "order_req')       # 잘린 마지막 줄
     rep = scan_journal(j)
     assert rep.seen_order_ids == {"A", "B", "C", "D"}
     assert rep.accepted == {"A": "0001"}
@@ -71,10 +71,10 @@ def test_killswitch_drill_passes_and_sends_nothing(tmp_path):
 
 
 def test_killswitch_drill_refuses_if_already_tripped(tmp_path):
-    (tmp_path / "KS").write_text("real incident")
+    (tmp_path / "KS").write_text("real incident", encoding="utf-8")
     snap = AccountSnapshot(1_000_000, {}, {"005930": 70_000}, 1_000_000)
     cl = killswitch_drill.run(tmp_path / "KS", Journal(), snap, "005930", 70_000, "tester")
-    assert not cl.passed and (tmp_path / "KS").read_text() == "real incident"
+    assert not cl.passed and (tmp_path / "KS").read_text(encoding="utf-8") == "real incident"
 
 
 # ---------- 대사 ----------
@@ -114,7 +114,7 @@ def test_krx_open():
 # ---------- 비밀값 파일 ----------
 def test_secret_file_loads_when_private(tmp_path, monkeypatch):
     f = tmp_path / "secrets.env"
-    f.write_text("# c\nKIS_PAPER_APP_KEY='abc'\n")
+    f.write_text("# c\nKIS_PAPER_APP_KEY='abc'\n", encoding="utf-8")
     f.chmod(0o600)
     monkeypatch.delenv("KIS_PAPER_APP_KEY", raising=False)
     assert load_secret_file(f) == {"KIS_PAPER_APP_KEY": "abc"}
@@ -124,7 +124,7 @@ def test_secret_file_loads_when_private(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name != "posix", reason="POSIX 권한")
 def test_secret_file_rejects_world_readable(tmp_path):
     f = tmp_path / "secrets.env"
-    f.write_text("K=v\n")
+    f.write_text("K=v\n", encoding="utf-8")
     f.chmod(0o644)
     with pytest.raises(InsecureSecretFile):
         load_secret_file(f)
@@ -134,7 +134,7 @@ def test_secret_file_rejects_inside_repo():
     f = Path(config.__file__).resolve().parents[2] / "var" / "test_secrets.env"
     f.parent.mkdir(exist_ok=True)
     try:
-        f.write_text("K=v\n")
+        f.write_text("K=v\n", encoding="utf-8")
         f.chmod(0o600)
         with pytest.raises(InsecureSecretFile):
             load_secret_file(f)
@@ -211,7 +211,7 @@ def test_secret_file_rejects_onedrive(tmp_path, monkeypatch):
     od = tmp_path / "OneDrive"
     (od / "stockking").mkdir(parents=True)
     f = od / "stockking" / "secrets.env"
-    f.write_text("K=v\n")
+    f.write_text("K=v\n", encoding="utf-8")
     f.chmod(0o600)
     monkeypatch.setenv("OneDrive", str(od))
     with pytest.raises(InsecureSecretFile, match="OneDrive"):
@@ -249,8 +249,8 @@ def test_open_check_order_blocks_until_resolved(tmp_path):
     assert startup_blockers(scan_journal(j), ks) == []
     # 정상 흐름(취소 응답 있음)은 막지 않음
     j2 = tmp_path / "j2.jsonl"
-    for line in j.read_text().splitlines()[:3]:
-        j2.open("a").write(line + "\n")
+    for line in j.read_text(encoding="utf-8").splitlines()[:3]:
+        j2.open("a", encoding="utf-8").write(line + "\n")
     _w(j2, event="cancel_response", client_order_id="C1", accepted=True)
     assert startup_blockers(scan_journal(j2), ks) == []
 

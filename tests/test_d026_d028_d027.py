@@ -146,7 +146,7 @@ def test_t1_routes_through_gate_and_tags_t_tech():
 def test_t1_price_limit_and_kill_switch_blocks(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         tech_orders.run_scenario("T1", FakeKis(price=25_000), Journal(), "000000", "op", [], mode=TradingMode.PAPER)
-    (tmp_path / "KILL_SWITCH").write_text("x")  # conftest 가 킬스위치 경로를 tmp 로 돌림
+    (tmp_path / "KILL_SWITCH").write_text("x", encoding="utf-8")  # conftest 가 킬스위치 경로를 tmp 로 돌림
     k = FakeKis()
     msg = tech_orders.run_scenario("T1", k, Journal(), "000000", "op", [], mode=TradingMode.PAPER)
     assert "rejected_by_risk" in msg and not k.sent  # 관문 우회 없음
@@ -312,3 +312,31 @@ def test_t3_cancel_cancels_all_open_t3():
     with pytest.raises(RuntimeError, match="취소할 T3"):
         tech_orders.run_scenario("T3-cancel", k, j, None, "op", j.records, now=dt(2026, 11, 30, 15, 17),
                                  mode=TradingMode.PAPER)
+
+
+def test_t1_cancel_by_program_no_time_rule():
+    """미체결 T1 은 KIS 앱이 아니라 --run T1-cancel 로 취소 (시간 제한 없음, 이미 취소한 건 재취소 안 함)."""
+    from datetime import datetime as dt
+    k, j = FakeKis(price=30_000), Journal()
+    tech_orders.run_scenario("T1", k, j, "000660", "op", [], mode=TradingMode.PAPER)
+    assert "[dry-run]" in tech_orders.run_scenario("T1-cancel", k, j, None, "op", j.records, dry_run=True,
+                                                   now=dt(2026, 11, 30, 9, 30), mode=TradingMode.PAPER)
+    assert not k.canceled
+    msg = tech_orders.run_scenario("T1-cancel", k, j, None, "op", j.records, now=dt(2026, 11, 30, 9, 30),
+                                   mode=TradingMode.PAPER)
+    assert len(k.canceled) == 1 and "000660" in msg
+    with pytest.raises(RuntimeError, match="취소할 T1"):
+        tech_orders.run_scenario("T1-cancel", k, j, None, "op", j.records, mode=TradingMode.PAPER)
+    with pytest.raises(tech_orders.TechOrdersForbidden):
+        tech_orders.run_scenario("T1-cancel", k, j, None, "op", j.records, mode=TradingMode.LIVE)
+    assert len(tech_orders.status_lines(j.records, [])) == 1   # 취소 기록은 상태 목록에 안 섞임
+
+
+def test_t5_skips_out_of_band_candidates():
+    c = {"T5": [{"symbol": "000001", "rank": "1", "in_band": "False"}, {"symbol": "000002", "rank": "2", "in_band": "True"}],
+         "T1": [{"symbol": "000010"}, {"symbol": "000020"}, {"symbol": "000030"}, {"symbol": "000040"}]}
+    assert tech_orders.pick_symbol("T5", c) == "000002"
+    assert tech_orders.pick_symbol("T5", c, rank=2) is None
+    assert tech_orders.pick_symbol("T5", {"T5": [{"symbol": "000001", "in_band": "false"}]}) is None
+    # T3 --rank N → T1 후보 N+1 순위 (T3'=--rank 2, T3''=--rank 3)
+    assert [tech_orders.pick_symbol("T3", c, rank=n) for n in (1, 2, 3)] == ["000020", "000030", "000040"]

@@ -43,4 +43,4 @@ def test_journal_scrubs_secrets(tmp_path):
     j = Journal(tmp_path / "audit.jsonl")
     rec = j.write("x", headers={"appkey": "AAA", "authorization": "Bearer T", "tr_id": "V1"})
     assert rec["headers"]["appkey"] == "****" and rec["headers"]["tr_id"] == "V1"
-    assert "AAA" not in (tmp_path / "audit.jsonl").read_text()
+    assert "AAA" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")

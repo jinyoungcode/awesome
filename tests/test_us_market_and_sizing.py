@@ -94,7 +94,7 @@ def test_load_bars_converts_usd_to_krw(tmp_path):
 
 def test_load_bars_usd_without_fx_fails(tmp_path):
     csv = tmp_path / "bars.csv"
-    csv.write_text("date,symbol,open,high,low,close,volume,currency\n2025-01-02,AAPL,1,1,1,1,1,USD\n")
+    csv.write_text("date,symbol,open,high,low,close,volume,currency\n2025-01-02,AAPL,1,1,1,1,1,USD\n", encoding="utf-8")
     with pytest.raises(ValueError):
         load_bars_csv(csv)
 
