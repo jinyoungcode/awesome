@@ -20,7 +20,7 @@ import csv
 import json
 import os
 from dataclasses import asdict, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import config
@@ -316,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.action in ("plan", "verify"):
         rows = make_plan(state, *_inputs(a), sd, ed)
         if a.action == "plan":
-            out = write_order_plan(rows, PLAN_DIR) if rows else None
+            out = write_order_plan(rows, PLAN_DIR, signal_date=sd)
             journal.write("s02_plan", signal_date=sd.isoformat(), rows=[asdict(r) for r in rows])
             print(f"주문계획 {len(rows)}건 → {out}")
             return 0
@@ -328,12 +328,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"C2 신호 일치: {'일치' if rep['match'] else '불일치'} (누락 {rep['missing']}, 초과 {rep['extra']})")
         return 0 if rep["match"] else 1
 
-    kis = make_client(a)
     if a.action == "submit":
         if not a.operator:
             ap.error("--operator 필요")
         plan_path = PLAN_DIR / f"order_plan_{sd:%Y%m%d}.csv"
-        rows = read_plan(plan_path) if plan_path.exists() else []
+        if not plan_path.exists():
+            print(f"중단: 주문계획 파일 없음 ({plan_path})")
+            return 2
+        rows = read_plan(plan_path)
+        today_kst = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+        if any(row.get("signal_date") != sd.isoformat() or row.get("exec_date") != today_kst for row in rows):
+            print(f"중단: 주문계획 날짜 불일치 (신호일 {sd}, 실행일 {today_kst} 필요)")
+            return 2
+        if not rows:
+            print("주문계획 0건")
+            return 0
+        kis = make_client(a)
         from ..risk.stages import capital_error
         bal = kis.inquire_balance()
         if (err := capital_error(bal.get("cash_d2") or bal["cash"], state["starting_cash"])):
@@ -346,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
         for r in res:
             print(f"  {r['side']} {r['ticker']} {r['qty']}주 → {r['status']} {r['message']}")
         return 0
+    kis = make_client(a)
     if a.action == "cancel":
         done = cancel_open_entries(load_records(), kis, journal, datetime.now().strftime("%Y%m%d"))
         print(f"LDAY 잔량 취소 {len(done)}건: {done}")

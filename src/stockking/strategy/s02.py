@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import csv
+from tempfile import NamedTemporaryFile
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -160,12 +161,24 @@ PLAN_FIELDS = ["signal_date", "exec_date", "strategy_id", "ticker", "side", "ord
                "limit_price", "init_stop", "risk_krw", "reason_code", "rank", "exception"]
 
 
-def write_order_plan(rows: list[PlanRow], out_dir: str | Path = "var/order_plan") -> Path:
-    out = Path(out_dir) / f"order_plan_{rows[0].signal_date.replace('-', '') if rows else 'empty'}.csv"
+def write_order_plan(rows: list[PlanRow], out_dir: str | Path = "var/order_plan",
+                     *, signal_date: date | None = None) -> Path:
+    day = signal_date.strftime("%Y%m%d") if signal_date else (
+        rows[0].signal_date.replace("-", "") if rows else "empty"
+    )
+    out = Path(out_dir) / f"order_plan_{day}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=PLAN_FIELDS, extrasaction="ignore")
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: ("" if v is None else v) for k, v in asdict(r).items()})
+    with NamedTemporaryFile(mode="w", newline="", encoding="utf-8", dir=out.parent,
+                            delete=False) as fh:
+        temporary = Path(fh.name)
+        try:
+            w = csv.DictWriter(fh, fieldnames=PLAN_FIELDS, extrasaction="ignore")
+            w.writeheader()
+            for row in rows:
+                w.writerow({k: ("" if v is None else v) for k, v in asdict(row).items()})
+            fh.close()
+            temporary.replace(out)
+        finally:
+            fh.close()
+            temporary.unlink(missing_ok=True)
     return out

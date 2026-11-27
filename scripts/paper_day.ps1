@@ -117,7 +117,11 @@ switch ($Step) {
     }
     'plan' {
         if (-not $SignalDate) { $SignalDate = Get-Date -Format 'yyyy-MM-dd' }
-        if (-not $DataDir) { $DataDir = Join-Path 'data' ($SignalDate -replace '-', '') }
+        if (-not $DataDir) {
+            $dataRoot = $env:STOCKKING_DATA_DIR
+            if (-not $dataRoot) { $dataRoot = Join-Path $env:USERPROFILE 'stockking-data' }
+            $DataDir = Join-Path (Join-Path $dataRoot 's02_inputs') $SignalDate
+        }
         if (-not $ExecDate) {
             $d = [datetime]::ParseExact($SignalDate, 'yyyy-MM-dd', $null).AddDays(1)
             while ($d.DayOfWeek -eq 'Saturday' -or $d.DayOfWeek -eq 'Sunday') { $d = $d.AddDays(1) }
