@@ -92,3 +92,70 @@ $env:STOCKKING_ACCOUNT = "paper"
   - paper 첫 `connect_check`(또는 `ledger_close --open`)가 새로 고정하고, 감사 로그에 `capital_fixed`(새 값·이전 값·사유 `D-049 restart`)를 남깁니다.
   - 그 뒤로는 파일 값을 이어 씁니다. 다시 고정하려면 대표 승인 뒤 `connect_check --refix-capital --operator 대표` 를 실행합니다. 이전 파일은 archive 로 보관되고 사유 `refix (승인: 대표)` 가 기록됩니다.
 - 비상 정지: `& $PY -m stockking.ops.kill_all --trip --reason "…" --operator 대표` / 해제 `--clear --operator 대표`.
+
+## 7. 2단계 설계 범위 추가 — D-051·D-052 실계좌 점검 주문 L_TECH (설계만, 착수 승인 전)
+
+> 근거: D-052(D-027의 유일한 예외), D-051(T0→T1 조건 중 '실계좌 점검 주문 4건 정상 체결·정산'), 리스크관리실 조건 ①~⑥. **2단계 착수 승인과 대표 운용 ON 승인 전에는 구현·실행하지 않습니다.**
+
+### 7.1 식별자
+| 항목 | 값 |
+|---|---|
+| strategy_id · reason_code | `L_TECH` |
+| 청산 사유 exit_reason | `X_LTECH` (15:15 재시도는 `X_ADMIN`) |
+| 장부 book | `LTECH` — 전략 성과·C2 에서 제외, 장부 대사·회계·손실 한도에는 포함 |
+| 주문 ID | `LV-` (live 프로필) |
+| 명령 | `python -m stockking.ops.live_tech_orders --run L1-buy / L1-sell / L2-buy / L2-sell / sweep / --status --operator 대표` |
+
+### 7.2 실행 조건 (하나라도 어기면 증권사 접속 전에 거부)
+1. live 프로필(`STOCKKING_ACCOUNT=live`) + `TradingMode.LIVE` + 실계좌 브로커 + `LIVE_TRADING_APPROVED` + 운용 ON 승인 기록. paper 프로필이나 호환 모드에서는 명령 자체가 거부됩니다(`T_TECH` 가 모의 전용인 것과 정반대).
+2. `--operator` 필수. 실행자·시각·명령을 `var\live\journal` 에 기록합니다(조건 ⑥).
+3. **영구 카운터**(조건 ①): `var\live\ltech_counter.json` 에 주문 1건마다 `{leg, side, symbol, client_order_id, ts, operator}` 를 덧붙이기만 합니다.
+   - 증권사로 보내기 **전에** 먼저 기록합니다. 그래서 전송 중 다운돼도 1건으로 셉니다.
+   - 한도는 매수 2·매도 2, 합계 4. 다 쓰면 모든 `--run` 이 영구 거부됩니다.
+   - **해제·초기화 명령은 만들지 않습니다.** 파일을 지우거나 고쳐도 소용없도록, 매번 감사 로그의 `L_TECH` 주문 요청 수와 비교해 **큰 쪽**을 씁니다. 둘이 다르면 시작 점검이 막고 경보를 냅니다.
+4. 순서 규칙(D-052):
+   - L1-buy → 같은 날 L1-sell → 다른 날 L2-buy → 같은 날 L2-sell 순서만 허용합니다.
+   - L2 는 L1 과 다른 종목이어야 합니다.
+   - 열린 L_TECH 보유분이 있으면 매수는 거부합니다.
+5. 종목 조건(D-052): KOSPI200 구성, 거래대금 상위, 상태 이상 없음(자료팀 후보 파일 role `L_TECH`). 실행 시점 현재가로 **1주 가격 ≤ 주문 목표의 110%**(15만 원이면 33,000원)를 다시 확인합니다. 수량은 1주 고정입니다.
+6. **실행 금지일**(조건 ⑤): 그날 T0 일중 손실 한도에 도달했거나, 계좌 킬스위치 또는 KILL_ALL 이 발동 중이면 **매수 회차(L1-buy·L2-buy)를 시작하지 않습니다.**
+   - 이미 산 보유분의 청산 매도는 예외로 허용합니다(D-026, 오버나이트 금지 ④). 아래 '결정 필요 1'.
+
+### 7.3 리스크 관문 (우회 없음, 조건 ②)
+- `RiskGate(limits_for(T0))` 를 그대로 거칩니다: 1건 손실 2%(15만 원 기준 3,000원, 손절가 필수), T0 일중 −5%·주간 −8%·최종 −20%, 킬스위치 중 매수 금지(D-026), 비중 22.1%, 공매도 금지.
+- **시장가 X_LTECH**(조건 ③): `market_sell_exit_reasons` 에 `X_LTECH` 를 넣습니다. 다만 다음을 **모두** 만족할 때만 통과합니다. 다른 live 시장가 규칙은 바꾸지 않습니다.
+  - 관문 조건: `strategy_id == "L_TECH"` · 매도 · 국내 · 보유 수량 이내
+  - 라우터 조건: live 프로필 · LIVE 모드 · 실계좌 브로커
+  - 모의에서 `X_LTECH` 가 오면 거부합니다(`X_TECH` 처리의 거울상).
+- 매도 방식: 1회차는 국내 시장가(`X_LTECH`), 2회차는 시장성 지정가(기준가 ×0.98, 호가 단위 내림, `X_LTECH`).
+
+### 7.4 오버나이트 금지 (조건 ④)
+- `--run sweep` 을 15:15 에 실행합니다(paper_day 처럼 live 일정 스크립트에 고정).
+  1. 체결 조회로 L_TECH 보유 잔량과 미체결 매도를 확인합니다.
+  2. 미체결 매도는 취소하고, 잔량을 `X_ADMIN` 시장성 지정가(×0.98)로 1회 다시 냅니다.
+  3. 15:20 에 다시 조회해 잔량이 남아 있으면 **경보**를 냅니다:
+     - 콘솔에 빨간 줄로 표시
+     - 감사 로그에 `ltech_overnight_alert` 기록
+     - `var\live\ALERT_LTECH` 파일 생성 → 다음 날 `startup_check` 가 대표 확인(`resolve`) 전까지 모든 live 신규 매수를 막음
+- 재시도 주문은 같은 매도 회차의 잔량을 대신하는 것이라 카운터 4건에 더하지 않고, 감사 로그에만 연결해 남깁니다(`orgn` 회차 표시). → '결정 필요 2'
+
+### 7.5 정산·수수료 확인 (D-052)
+- `ledger_close` 가 book `LTECH` 의 실제 수수료·세금 차감액을 따로 집계합니다.
+- `CostModel.kr_v024`(D-045) 예상값과 차이를 보고합니다. 회계팀 대사 입력으로 씁니다.
+
+### 7.6 테스트 (2단계 구현 시 필수)
+| 테스트 | 확인 내용 |
+|---|---|
+| `test_ltech_fifth_order_refused` | 4건 뒤 5번째는 어느 회차든 거부. 카운터 파일을 지워도 감사 로그 기준으로 거부 |
+| `test_ltech_refused_on_paper_and_compat` | paper 프로필·호환 모드·모의 브로커에서 거부 |
+| `test_ltech_refused_while_kill_switch_or_daily_limit` | 계좌 킬스위치·KILL_ALL·일중 한도 도달일에는 매수 회차 거부, 보유분 청산 매도는 허용 |
+| `test_x_ltech_rejected_for_other_strategies` | S02·T_TECH 등 다른 전략이 `X_LTECH` 시장가를 쓰면 관문 거부, 모의에서 `X_LTECH` 거부 |
+| `test_ltech_counter_written_before_send` | 증권사 전송 중 예외가 나도 1건으로 셈 |
+| `test_ltech_sequence_and_symbol_rules` | 순서 위반, 같은 종목 2회차, 보유 중 매수, 가격 33,000원 초과는 거부 |
+| `test_ltech_sweep_retries_then_alerts` | 15:15 미체결 → X_ADMIN ×0.98 재시도 → 잔량 남으면 경보 파일 생성, 시작 점검 차단 |
+| `test_ltech_book_excluded_from_strategy_and_c2` | 성과·C2 제외, 대사·손실 한도 포함 |
+
+### 7.7 결정 필요 (총괄·리스크관리실)
+1. **실행 금지일의 청산 매도**: 조건 ⑤('한도 도달일·킬스위치 중 실행 금지')를 매수 회차에만 적용하고, 이미 산 1주의 청산 매도는 허용할지. 권장은 허용입니다. 그러지 않으면 조건 ④(오버나이트 금지)와 부딪힙니다.
+2. **15:15 재시도 주문의 건수**: X_ADMIN 재시도를 4건 카운터에 넣지 않고 같은 매도 회차의 잔량 대체로 볼지(권장). 넣으면 재시도 1번으로 2회차 매도 자리를 써 버릴 수 있습니다.
+3. **경보 수단**: 콘솔·감사 로그·경보 파일(다음 날 시작 차단) 외에 대표 휴대폰 알림이 필요한지. 필요하면 별도 채널 결정이 있어야 합니다.
