@@ -171,19 +171,6 @@ def test_data_root_refuses_git_repo(monkeypatch):
         store.data_root()
 
 
-def test_tech_candidates_price_band():
-    V = s02_inputs.Verdict
-    a = V("100000", "KOSPI", price=30_000, adv20=9_000_000_000)
-    b = V("200000", "KOSPI", price=31_000, adv20=20_000_000_000)
-    c = V("300000", "KOSDAQ", price=30_500, adv20=50_000_000_000); c.fail("U7 거래정지")
-    d = V("400000", "KOSDAQ", price=35_000, adv20=4_000_000_000); d.fail("U5 20일 평균 거래대금 부족")
-    e = V("500000", "KOSPI", price=40_000, adv20=99_000_000_000)
-    rows = s02_inputs.pick_tech_candidates([a, b, c, d, e])
-    t1 = [r["symbol"] for r in rows if r["role"] == "T1"]
-    t5 = [r["symbol"] for r in rows if r["role"] == "T5"]
-    assert t1 == ["200000", "100000"] and t5 == ["400000"]
-
-
 def test_live_quote_client_is_quote_only(monkeypatch):
     """D-041: 실전 시세 클라이언트는 허용된 시세 조회 GET과 토큰 발급 외에는 모두 거부."""
     from stockking_data.live_quotes import KisLiveQuoteClient, QuoteOnlyViolation
@@ -395,15 +382,6 @@ def test_s02_inputs_refuses_short_index(tmp_path, monkeypatch):
     assert not (tmp_path / "bars.csv").exists() and not (tmp_path / "index.csv").exists()
 
 
-def test_tech_candidates_fallback_when_band_empty():
-    V = s02_inputs.Verdict
-    vs = [V("100000", "KOSPI", price=1_500_000, adv20=9_000_000_000), V("200000", "KOSPI", price=900_000, adv20=50_000_000_000),
-          V("300000", "KOSPI", price=3_000_000, adv20=50_000_000_000)]
-    rows = s02_inputs.pick_tech_candidates(vs, s02_inputs.tech_ranges(10_000_000))   # T1 1.8~2.2백만 원: 해당 없음
-    t1 = [r for r in rows if r["role"] == "T1"]
-    assert [r["symbol"] for r in t1] == ["100000", "200000"] and not any(r["in_band"] for r in t1)
-
-
 def test_verify_index_flags_jumps_and_compares(tmp_path):
     from stockking_data import index_check
     idx = tmp_path / "index.csv"
@@ -485,3 +463,34 @@ def test_s02_manifest_has_regime(tmp_path):
     m = s02_inputs.build(KisQuotes(FakeClient(), log=lambda *_: None), T, ["005930"], [], tmp_path,
                          log=lambda *_: None, status_now=True)
     assert set(m["regime"]) == {"KOSPI200", "KOSDAQ150"} and "on" in m["regime"]["KOSPI200"]
+
+
+def test_t1_uses_integer_qty_amount_band():
+    V = s02_inputs.Verdict
+    r = s02_inputs.tech_ranges(10_000_000)          # 목표 200만: T1 금액 180만~220만, T5 1주 220만 초과~250만
+    vs = [V("100000", "KOSPI", price=1_709_000, adv20=99_000_000_000),   # 1주 171만, 2주 342만 → 범위 밖
+          V("200000", "KOSPI", price=55_000, adv20=50_000_000_000),      # 36주 = 198만 → 범위 안
+          V("300000", "KOSPI", price=30_000, adv20=60_000_000_000),      # 67주 = 201만
+          V("400000", "KOSDAQ", price=2_400_000, adv20=5_000_000_000),   # T5 1주 240만
+          V("500000", "KOSPI", price=60_000, adv20=70_000_000_000)]
+    vs[4].fail("U7 거래정지")
+    rows = s02_inputs.pick_tech_candidates(vs, r)
+    t1 = [x for x in rows if x["role"] == "T1"]
+    assert [(x["symbol"], x["q"], x["order_amount"]) for x in t1] == [("300000", 67, 2_010_000), ("200000", 36, 1_980_000)]
+    assert all(x["in_band"] for x in t1)
+    t5 = [x for x in rows if x["role"] == "T5"]
+    assert [(x["symbol"], x["q"], x["order_amount"]) for x in t5] == [("400000", 1, 2_400_000)]
+    assert s02_inputs.tech_ranges(150_000)["T1"] == (27_000, 33_000)
+    assert s02_inputs.int_qty_in_band(1_709_000, 1_800_000, 2_200_000) is None
+
+
+def test_rebuild_tech_from_cache_no_kis_calls(tmp_path):
+    q = KisQuotes(FakeClient(), log=lambda *_: None)
+    s02_inputs.build(q, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    r = s02_inputs.rebuild_tech_from_cache(tmp_path, 10_000_000, log=lambda *_: None)
+    assert r["T"] == T.isoformat()
+    rows = list(csv.DictReader((tmp_path / "tech_candidates.csv").open()))
+    assert rows and rows[0]["q"] and int(rows[0]["order_amount"]) == int(rows[0]["q"]) * int(rows[0]["price"])
+    assert (tmp_path / "tech_candidates_prev.csv").exists()
+    import json
+    assert json.loads((tmp_path / "manifest.json").read_text())["tech_ranges"]["rebuilt_from_cache"] is True

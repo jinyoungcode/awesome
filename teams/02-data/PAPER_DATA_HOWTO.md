@@ -70,6 +70,18 @@ Get-Content "$OUT\manifest.json" -Encoding UTF8 | Select-String "universe_passed
 
 ---
 
+## ★ 점검 주문 후보만 다시 만들기 (KIS 호출 없음, 주말 실행 가능)
+
+T1 판정은 **정수 수량 q로 q × 가격 ∈ 목표 90~110%** (D-005, 11/28 총괄 요청). T5는 1주 가격 ∈ 목표 110% 초과~125%. `tech_candidates.csv`에 `q`, `order_amount` 열이 있습니다.
+```powershell
+& $PY $COL tech-candidates --inputs "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27"
+```
+- 입력 폴더의 `_cache`(11/27 일봉·상태)·`markets.csv`·`index.csv`만 읽습니다. 캐시를 지우거나 다시 받지 않으므로 주말에 돌려도 11/27 기준 그대로입니다(`--status-now` 불필요).
+- 운용 금액은 `STOCKKING_OPERATING_CAPITAL`(숫자/auto → `var\operating_capital.json`)을 따르며, `--capital 10000000`처럼 직접 지정 가능
+- 기존 파일은 `tech_candidates_prev.csv`로 보관, `manifest.json`의 `tech_pick`·`tech_ranges` 갱신
+
+---
+
 ## ★ D-048 국면 복귀 예상·전환 알림
 
 **복귀 예상 (10초, 매일 s02-inputs 뒤 아무 때나)**

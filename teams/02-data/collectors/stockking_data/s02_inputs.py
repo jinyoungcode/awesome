@@ -207,7 +207,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     write_csv(out / "index.csv", ["date", "symbol", "open", "high", "low", "close"], index_rows)
     write_csv(out / "universe_report.csv", ["symbol", "market", "passed", "price", "adv20", "bars", "missing_250", "reasons"],
               [{**v.__dict__, "reasons": "; ".join(v.reasons)} for v in verdicts])
-    write_csv(out / "tech_candidates.csv", ["role", "rank", "symbol", "market", "price", "adv20", "in_band"], tech)
+    write_csv(out / "tech_candidates.csv", TECH_FIELDS, tech)
     manifest = {
         "T": T.isoformat(), "source": "KIS Open API (모의투자 도메인 시세)", "adj": "KIS 수정주가(FID_ORG_ADJ_PRC=0)",
         "constituents": {"KOSPI200": len(kospi200), "KOSDAQ150": len(kosdaq150)},
@@ -232,26 +232,95 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     return manifest
 
 
+def int_qty_in_band(price: int, lo: int, hi: int) -> int | None:
+    """정수 수량 q ≥ 1 중 q × price ∈ [lo, hi] 이고 목표(구간 중앙)에 가장 가까운 q. 없으면 None (D-005)."""
+    if price <= 0:
+        return None
+    target = (lo + hi) / 2
+    best = None
+    for q in {max(1, int(target // price)), max(1, int(target // price) + 1), max(1, hi // price)}:
+        amt = q * price
+        if lo <= amt <= hi and (best is None or abs(amt - target) < abs(best * price - target)):
+            best = q
+    return best
+
+
+def _clean(v: Verdict) -> bool:
+    return v.price > 0 and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)
+
+
 def pick_tech_candidates(verdicts: list[Verdict], ranges: dict[str, tuple[int, int]] | None = None) -> list[dict]:
-    """D-027 T1/T5 후보: 상태 이상(U6/U7) 없고 T일 일봉이 있는 종목 중 가격대 안, 20일 평균 거래대금 상위 순.
-    U3~U5·U8 탈락은 무관(점검 주문은 전략 유니버스 밖이어도 됨). 1순위를 지정 종목으로 쓴다."""
+    """D-027 점검 주문 후보 (상태 이상 U6/U7 없고 T일 일봉이 있는 종목, 20일 평균 거래대금 상위 순).
+    - T1(·T2): **정수 수량 q로 q × 가격 ∈ 목표 90~110%** (D-005, 총괄 11/28 요청). q·주문 금액 열 포함
+    - T5(1주 예외 '목표 초과'): 1주 가격 ∈ 목표 110% 초과~125% (q = 1)
+    U3~U5·U8 탈락은 무관(점검 주문은 전략 유니버스 밖이어도 됨). rank 1을 지정 종목으로 쓴다."""
     out = []
-    for role, (lo, hi) in (ranges or tech_ranges(DEFAULT_CAPITAL)).items():
-        ok = [v for v in verdicts
-              if lo <= v.price <= hi and v.price > 0
-              and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)]
-        ok.sort(key=lambda v: -v.adv20)
-        rows = [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20,
-                 "in_band": True} for i, v in enumerate(ok[:TECH_TOP_N], 1)]
-        if not rows:
-            # 가격대 안 종목이 없으면(운용 금액이 커서 목표가 큰 경우 등) 상한 이하에서 가장 가까운 가격 순으로 대체 후보
-            alt = [v for v in verdicts if 0 < v.price <= hi and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)
-                   and v.adv20 >= MIN_ADV20]
-            alt.sort(key=lambda v: (hi - v.price, -v.adv20))
-            rows = [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20,
-                     "in_band": False} for i, v in enumerate(alt[:TECH_TOP_N], 1)]
-        out += rows
+    rng = ranges or tech_ranges(DEFAULT_CAPITAL)
+    pool = sorted([v for v in verdicts if _clean(v)], key=lambda v: -v.adv20)
+
+    def row(role, i, v, q, in_band):
+        return {"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "q": q,
+                "order_amount": q * v.price, "adv20": v.adv20, "in_band": in_band}
+
+    lo, hi = rng["T1"]
+    t1 = [(v, int_qty_in_band(v.price, lo, hi)) for v in pool]
+    t1 = [(v, q) for v, q in t1 if q]
+    rows = [row("T1", i, v, q, True) for i, (v, q) in enumerate(t1[:TECH_TOP_N], 1)]
+    if not rows:  # 정수 수량으로도 맞출 수 없으면 목표에 가장 가까운 금액 순
+        target = (lo + hi) / 2
+        alt = [(v, max(1, round(target / v.price))) for v in pool if v.adv20 >= MIN_ADV20]
+        alt.sort(key=lambda x: abs(x[1] * x[0].price - target))
+        rows = [row("T1", i, v, q, False) for i, (v, q) in enumerate(alt[:TECH_TOP_N], 1)]
+    out += rows
+
+    lo5, hi5 = rng["T5"]
+    t5 = [v for v in pool if lo5 < v.price <= hi5]
+    rows = [row("T5", i, v, 1, True) for i, v in enumerate(t5[:TECH_TOP_N], 1)]
+    if not rows:
+        alt = sorted([v for v in pool if 0 < v.price <= hi5 and v.adv20 >= MIN_ADV20], key=lambda v: (hi5 - v.price, -v.adv20))
+        rows = [row("T5", i, v, 1, False) for i, v in enumerate(alt[:TECH_TOP_N], 1)]
+    out += rows
     return out
+
+
+TECH_FIELDS = ["role", "rank", "symbol", "market", "price", "q", "order_amount", "adv20", "in_band"]
+
+
+def rebuild_tech_from_cache(inputs: Path, capital: int, log=print) -> dict:
+    """KIS 재조회 없이 입력 폴더의 _cache(일봉·상태)·markets.csv·index.csv로 tech_candidates.csv만 다시 만든다.
+    캐시의 T·상태를 그대로 쓰므로 주말·다른 날 실행해도 값이 바뀌지 않는다. 기존 파일은 tech_candidates_prev.csv로 보관."""
+    import csv as _csv
+    markets = {r["symbol"]: r["market"] for r in _csv.DictReader((inputs / "markets.csv").open(encoding="utf-8"))}
+    calendar = sorted({r["date"] for r in _csv.DictReader((inputs / "index.csv").open(encoding="utf-8")) if r["symbol"] == "KOSPI200"})
+    verdicts, T = [], None
+    for f in sorted((inputs / "_cache").glob("*.json")):
+        c = json.loads(f.read_text(encoding="utf-8"))
+        s = f.stem
+        if s not in markets:
+            continue
+        T = T or c["T"]
+        if c["T"] != T:
+            raise RuntimeError(f"_cache 안에 서로 다른 T가 섞여 있습니다: {T} vs {c['T']} ({f.name})")
+        good = [b for b in c["bars"] if valid_ohlc(b)]
+        verdicts.append(judge(s, markets[s], good, c["status"], date.fromisoformat(c["T"]), calendar))
+    if not verdicts:
+        raise RuntimeError(f"{inputs / '_cache'} 에 캐시가 없습니다")
+    ranges = tech_ranges(capital)
+    tech = pick_tech_candidates(verdicts, ranges)
+    out = inputs / "tech_candidates.csv"
+    if out.exists():
+        out.replace(inputs / "tech_candidates_prev.csv")
+    write_csv(out, TECH_FIELDS, tech)
+    mf = inputs / "manifest.json"
+    if mf.exists():
+        m = json.loads(mf.read_text(encoding="utf-8"))
+        m["tech_pick"] = {role: next((r["symbol"] for r in tech if r["role"] == role), None) for role in ranges}
+        m["tech_ranges"] = {"operating_capital": capital, "target": capital // 5, **{k: list(v) for k, v in ranges.items()},
+                            "T1_rule": "q×가격 ∈ 목표 90~110% (정수 q)", "T5_rule": "1주 가격 ∈ 목표 110% 초과~125%",
+                            "rebuilt_from_cache": True}
+        mf.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+    log(f"T={T}, 운용 금액 {capital:,}원, 목표 {capital // 5:,}원 — 후보 {len(tech)}행 → {out}")
+    return {"T": T, "rows": tech}
 
 
 def exclusion_counts(verdicts: list[Verdict]) -> dict[str, int]:

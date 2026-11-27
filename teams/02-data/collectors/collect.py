@@ -153,7 +153,19 @@ def main(argv=None) -> int:
     eb.add_argument("--dist", help="KRX ETF 분배금 CSV (없으면 TR=원가격, 경고)")
     eb.add_argument("--kosdaq150-index", help="229200 상장 전 proxy용 KOSDAQ150 지수 CSV(index.csv 형식 또는 KRX CSV). 없으면 KIS에서 받음")
     eb.add_argument("--interval", type=float, default=None)
+    tc = sub.add_parser("tech-candidates", help="D-027 점검 주문 후보만 다시 만들기 (입력 폴더 _cache 사용, KIS 호출 없음)")
+    tc.add_argument("--inputs", required=True, help="s02-inputs 출력 폴더 (예: ...\\s02_inputs\\2026-11-27)")
+    tc.add_argument("--capital", type=int, default=None, help="운용 금액. 기본: STOCKKING_OPERATING_CAPITAL(숫자/auto)")
     a = ap.parse_args(argv)
+
+    if a.cmd == "tech-candidates":
+        capital, src = (a.capital, "--capital") if a.capital else resolve_capital(repo_root=REPO)
+        print(f"운용 금액 {capital:,}원 (출처: {src})", file=sys.stderr)
+        r = s02_inputs.rebuild_tech_from_cache(Path(a.inputs).expanduser(), capital)
+        for x in r["rows"]:
+            print(f"  {x['role']} #{x['rank']} {x['symbol']} {x['market']} 가격 {x['price']:,} × {x['q']}주 = {x['order_amount']:,}원"
+                  f" (ADV20 {x['adv20'] / 1e8:,.0f}억) {'' if x['in_band'] else '[범위 밖 대체]'}")
+        return 0
 
     if a.cmd == "regime-outlook":
         from stockking_data.index_check import read_index_csv
