@@ -77,6 +77,12 @@ def _etf_bars(a, q) -> int:
         b = [x for x in bars if x["symbol"] == s]
         tr = etf.tr_series(b, dists.get(s, {}))
         proxy = []
+        if s == "229200" and tr and not a.kosdaq150_index and tr[0]["date"] > "2010-01-04":
+            # KRX CSV가 없으면 KIS에서 KOSDAQ150 지수(2010-01~상장일)를 받아 proxy 생성
+            first = date.fromisoformat(tr[0]["date"])
+            code, rows_k = s02_inputs.resolve_kosdaq150(q, max(a.start, date(2010, 1, 4)), first, None)
+            print(f"  KOSDAQ150 지수(KIS 코드 {code}) {len(rows_k)}행으로 229200 상장 전 proxy 생성", file=sys.stderr)
+            proxy = etf.proxy_from_index(rows_k, tr[0])
         if s == "229200" and a.kosdaq150_index and tr:
             from stockking_data.index_check import read_index_csv, read_krx_index_ohlc
             p = Path(a.kosdaq150_index)
@@ -145,7 +151,7 @@ def main(argv=None) -> int:
     eb.add_argument("--end", type=date.fromisoformat, default=date.today())
     eb.add_argument("--symbols", default="069500,229200,114260,132030")
     eb.add_argument("--dist", help="KRX ETF 분배금 CSV (없으면 TR=원가격, 경고)")
-    eb.add_argument("--kosdaq150-index", help="229200 상장 전 proxy용 KOSDAQ150 지수 CSV(index.csv 형식 또는 KRX CSV)")
+    eb.add_argument("--kosdaq150-index", help="229200 상장 전 proxy용 KOSDAQ150 지수 CSV(index.csv 형식 또는 KRX CSV). 없으면 KIS에서 받음")
     eb.add_argument("--interval", type=float, default=None)
     a = ap.parse_args(argv)
 
