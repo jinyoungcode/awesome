@@ -340,3 +340,17 @@ def test_t5_skips_out_of_band_candidates():
     assert tech_orders.pick_symbol("T5", {"T5": [{"symbol": "000001", "in_band": "false"}]}) is None
     # T3 --rank N → T1 후보 N+1 순위 (T3'=--rank 2, T3''=--rank 3)
     assert [tech_orders.pick_symbol("T3", c, rank=n) for n in (1, 2, 3)] == ["000020", "000030", "000040"]
+
+
+def test_t1_ignores_in_band_column_uses_own_sizing(tmp_path):
+    """총괄 11/27 확인 ①: T1 은 후보 파일 in_band 가 아니라 D-005 90~110% 정수 수량으로 판정."""
+    cand = tmp_path / "c.csv"
+    cand.write_text("role,rank,symbol,market,price,adv20,in_band\nT1,1,000660,KOSPI,15000,1,False\n", encoding="utf-8")
+    c = tech_orders.load_candidates(cand)
+    assert tech_orders.pick_symbol("T1", c) == "000660"
+    msg = tech_orders.run_scenario("T1", FakeKis(price=15_000), Journal(), "000660", "op", [],
+                                   mode=TradingMode.PAPER, dry_run=True)
+    assert "관문 통과" in msg
+    with pytest.raises(ValueError, match="목표의 20%"):      # 수량으로 못 맞추는 고가 종목은 안내와 함께 거부
+        tech_orders.run_scenario("T1", FakeKis(price=21_000), Journal(), "000660", "op", [],
+                                 mode=TradingMode.PAPER, dry_run=True)

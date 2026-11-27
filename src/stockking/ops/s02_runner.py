@@ -97,7 +97,7 @@ def make_plan(state: dict, bars, universe: set[str], markets: dict[str, str], in
     regime_diag.clear()
     for idx_name, closes in sorted(idx_close.items()):
         ma = sma(closes, 200)
-        regime_diag[idx_name] = {"close": closes[-1] if closes else None,
+        regime_diag[idx_name] = {"close": round(closes[-1], 2) if closes else None,
                                  "sma200": round(ma, 2) if ma is not None else None,
                                  "on": bool(ma is not None and closes and closes[-1] > ma), "bars": len(closes)}
 
@@ -315,7 +315,8 @@ def _inputs(a):
     with open(a.index, encoding="utf-8") as fh:
         from ..data import Bar
         for r in csv.DictReader(fh):
-            idx.append(Bar(date.fromisoformat(r["date"]), r["symbol"], *(int(float(r[k])) for k in
+            # 지수는 소수점 2자리(예: 758.51) — 정수로 자르면 200일 평균과의 비교가 어긋날 수 있다(PC 실측 11/27)
+            idx.append(Bar(date.fromisoformat(r["date"]), r["symbol"], *(float(r[k]) for k in
                                                                         ("open", "high", "low", "close")), 0))
     return bars, universe, markets, idx
 

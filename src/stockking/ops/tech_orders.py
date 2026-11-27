@@ -180,7 +180,8 @@ def run_scenario(scenario: str, kis, journal: Journal, symbol: str | None, opera
         qty = shares_for_target(price, target)
         if qty is None:
             raise ValueError(f"T1: {symbol} {price:,}원으로는 목표 {target:,}원의 90~110%를 정수 수량으로 못 맞춤 "
-                             "— 후보 rank 2 를 쓰세요(--rank 2)")
+                             f"— 1주 가격이 {target // 5:,}원(목표의 20%) 이하인 종목은 항상 맞출 수 있습니다. "
+                             "다른 후보(--rank 2) 또는 --symbol 로 지정하세요")
         order = OrderRequest(symbol, Side.BUY, qty, OrderType.LIMIT, price, STRATEGY_ID,
                              stop_price=round(price * 0.92, 2), order_target=target)
     elif scenario == "T2":   # T1 보유분 전량 매도 (청산 경로·매도세)

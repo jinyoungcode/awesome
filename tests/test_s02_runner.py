@@ -295,3 +295,24 @@ def test_c2_evidence_regime_and_d047_zero_plans():
     recs.append({"event": "s02_plan", "signal_date": "2026-11-27", "rows": [{}], "plan_count": 1, "regime": {}})
     assert c2_row(recs, [])[1] == "PENDING"                                  # 계획 있는데 비교 전
     assert c2_row(recs, [{"date": "2026-11-27", "match": False}])[1] == "FAIL"
+
+
+def test_index_close_keeps_decimals(tmp_path):
+    """PC 실측 11/27: 지수 종가 758.51 을 758 로 잘라 읽던 문제 — 원값 그대로 200일 평균과 비교."""
+    import argparse
+    from stockking.ops import s02_runner as R
+    (tmp_path / "bars.csv").write_text("date,symbol,open,high,low,close,volume\n", encoding="utf-8")
+    (tmp_path / "u.txt").write_text("", encoding="utf-8")
+    (tmp_path / "m.csv").write_text("symbol,market\n", encoding="utf-8")
+    rows = ["date,symbol,open,high,low,close"] + [
+        f"2026-{1 + i // 28:02d}-{1 + i % 28:02d},KOSPI200,100.4,100.9,100.1,{100.4 if i < 199 else 100.49}"
+        for i in range(200)]
+    (tmp_path / "i.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    a = argparse.Namespace(bars=tmp_path / "bars.csv", universe=tmp_path / "u.txt", markets=tmp_path / "m.csv",
+                           index=tmp_path / "i.csv")
+    _, _, _, idx = R._inputs(a)
+    assert idx[-1].close == 100.49
+    from datetime import date
+    R.make_plan(R.load_state(tmp_path / "none.json"), [], set(), {}, idx, date(2026, 12, 31), date(2027, 1, 2))
+    d = R.regime_diag["KOSPI200"]
+    assert d["close"] == 100.49 and d["on"] is True   # 정수로 자르면 100 < 평균 100.40045 → OFF 로 뒤집힘
