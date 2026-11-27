@@ -12,6 +12,10 @@
 | 4 | 과최적화 방지 규칙 | 완료 | [EVALUATION.md](EVALUATION.md) §2·§4 |
 | 5 | 리스크관리실 한도 협의 | 협의안 제출, **회신 대기** | [RISK_ALIGNMENT.md](RISK_ALIGNMENT.md) |
 
+## D-048·D-049 후속 — 9회차 (2026-11-27)
+- T0→T1 증액 조건 막힘 해소 수정안 (대표 결정용) [T0_T1_GATE_OPTIONS.md](T0_T1_GATE_OPTIONS.md)
+- S03 가격 기준(신호 tr_close, 주문·장부 원가격) 확정
+
 ## D-047 대응 — 8회차 (2026-11-27)
 - 국면 OFF로 S02 0건 → 11/30 점검용 주문 하루 실행 계획 [PAPER_3DAY_CHECK.md](PAPER_3DAY_CHECK.md) §7
 - C2 판정표 양식 [journal/C2_TEMPLATE.md](journal/C2_TEMPLATE.md)
