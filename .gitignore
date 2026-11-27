@@ -28,3 +28,6 @@ data/
 
 # --- Claude Code 로컬 설정(개인 권한·경로) — 커밋 금지 ---
 .claude/settings.local.json
+
+# D-049 텔레그램 알림 키 (저장소 밖 %APPDATA%\stockking\notify.env 에만 둠)
+notify.env
