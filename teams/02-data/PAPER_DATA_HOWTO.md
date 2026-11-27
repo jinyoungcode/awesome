@@ -92,6 +92,14 @@ S02 0건 원인이 국면 필터(지수 > 200일 평균) OFF이고, KIS 모의 �
 ```
 - `KRX 최대 오차`가 0.1% 이내면 KIS 값이 공표값과 같은 것 → 국면 OFF는 실제 시장 상황입니다. 크게 다르면 KIS 모의 지수를 쓰지 않고 **KRX 지수로 index.csv를 대체**하는 방안을 총괄에 올립니다.
 
+**1차 결과 (11/27, PC 세션):** KOSPI200·KOSDAQ150 각 279행, KIS 하루 재조회 **불일치 0건** → 자료팀 구간 합치기는 정상, 값은 KIS 모의 원천 그대로. 급변(8% 초과) KOSPI200 12일·KOSDAQ150 10일이 실제 시장인지는 KRX 대조(2)로 판정.
+
+**2-1) KRX 값이 다르면 — 대체 index.csv 만들기 (10초)**
+```powershell
+& $PY $COL index-from-krx --krx-kospi200 "$env:USERPROFILE\stockking-data\krx_kospi200.csv" --krx-kosdaq150 "$env:USERPROFILE\stockking-data\krx_kosdaq150.csv" --out "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27\index.csv"
+```
+기존 KIS 지수 파일은 같은 폴더 `index_kis.csv`로 보관됩니다. KRX 조회 기간은 200거래일 이상(예: 20251001~오늘)이어야 합니다. **이 대체는 총괄 결정 후에만 사용**합니다.
+
 **3) D-027 점검 주문 후보:** 18:35 `s02-inputs` 실행 결과 `tech_candidates.csv`에 자동으로 생성됩니다(국면 필터와 무관). 운용 금액이 커서(예: 1,000만 원 → T1 목표 1주 180만~220만 원) 가격대 안 종목이 없으면, 상한 이하에서 가장 가까운 가격의 종목을 `in_band=False`로 대체 후보로 냅니다. 이 경우 매매팀·총괄이 대체 후보를 쓸지, 운용 금액을 낮출지 정해야 합니다.
 
 ---

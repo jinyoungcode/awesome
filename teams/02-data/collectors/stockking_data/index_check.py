@@ -90,3 +90,36 @@ def check(index_csv: Path, q=None, kosdaq150_code: str | None = None,
             sec["krx_max_abs_diff_pct"] = max((abs(c["diff_pct"]) for c in cmp_ if c["diff_pct"] is not None), default=None)
         report[name] = sec
     return report
+
+
+def read_krx_index_ohlc(path: Path) -> list[dict]:
+    """KRX '개별지수 시세 추이' CSV → [{date, open, high, low, close}] (오래된 날짜 순)."""
+    rows = list(csv.reader(io.StringIO(_decode(Path(path).read_bytes()))))
+    h = [c.strip() for c in rows[0]]
+
+    def col(*names):
+        for n in names:
+            for i, c in enumerate(h):
+                if c == n:
+                    return i
+        raise ValueError(f"KRX CSV에 {names} 열이 없습니다: {h}")
+    di, ci, oi, hi, li = col("일자"), col("종가"), col("시가"), col("고가"), col("저가")
+    out = []
+    for r in rows[1:]:
+        if len(r) <= max(di, ci, oi, hi, li) or not r[di].strip():
+            continue
+        d = r[di].strip().replace("/", "-").replace(".", "-")
+        if len(d) == 8 and d.isdigit():
+            d = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        f = lambda v: float(v.replace(",", ""))  # noqa: E731
+        out.append({"date": d, "open": f(r[oi]), "high": f(r[hi]), "low": f(r[li]), "close": f(r[ci])})
+    return sorted(out, key=lambda x: x["date"])
+
+
+def index_csv_from_krx(kospi200: Path, kosdaq150: Path, out: Path) -> dict:
+    """대체안: KRX 공표 지수로 S02 --index 파일 생성 (KIS 모의 지수가 공표값과 다를 때)."""
+    from .store import write_csv
+    k2, kq = read_krx_index_ohlc(kospi200), read_krx_index_ohlc(kosdaq150)
+    rows = [{**r, "symbol": "KOSPI200"} for r in k2] + [{**r, "symbol": "KOSDAQ150"} for r in kq]
+    write_csv(out, ["date", "symbol", "open", "high", "low", "close"], rows)
+    return {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "out": str(out), "source": "KRX 개별지수 시세 추이 CSV"}

@@ -96,7 +96,24 @@ def main(argv=None) -> int:
     vi.add_argument("--kosdaq150-code", help="manifest.json index_rows.kosdaq150_code 값")
     vi.add_argument("--no-refetch", action="store_true", help="KIS 재조회 없이 파일만 점검")
     vi.add_argument("--interval", type=float, default=None)
+    ik = sub.add_parser("index-from-krx", help="대체안: KRX 공표 지수 CSV 2개로 S02 index.csv 생성")
+    ik.add_argument("--krx-kospi200", required=True)
+    ik.add_argument("--krx-kosdaq150", required=True)
+    ik.add_argument("--out", required=True, help="만들 index.csv 경로 (기존 파일은 index_kis.csv로 보관)")
     a = ap.parse_args(argv)
+
+    if a.cmd == "index-from-krx":
+        from stockking_data.index_check import index_csv_from_krx
+        out = Path(a.out).expanduser()
+        _refuse_inside_git(out.parent)
+        if out.exists():
+            out.replace(out.with_name("index_kis.csv"))
+        r = index_csv_from_krx(Path(a.krx_kospi200), Path(a.krx_kosdaq150), out)
+        print(json.dumps(r, ensure_ascii=False))
+        if min(r["KOSPI200"], r["KOSDAQ150"]) < s02_inputs.MIN_INDEX_ROWS:
+            print(f"[실패] 지수 {s02_inputs.MIN_INDEX_ROWS}행 미만 — KRX 조회 기간을 늘려 다시 받으세요", file=sys.stderr)
+            return 2
+        return 0
 
     if a.cmd == "verify-index":
         from stockking_data.index_check import check

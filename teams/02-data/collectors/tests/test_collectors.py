@@ -427,3 +427,14 @@ def test_verify_index_kis_single_day_refetch(tmp_path):
     idx.write_text("date,symbol,open,high,low,close\n" + "".join(f"{r['date']},KOSPI200,1,1,1,{r['close']}\n" for r in k2))
     rep = index_check.check(idx, q, "2203")
     assert rep["KOSPI200"]["kis_refetch"] and all(r["match"] for r in rep["KOSPI200"]["kis_refetch"])
+
+
+def test_index_from_krx(tmp_path):
+    from stockking_data.index_check import index_csv_from_krx
+    hdr = "일자,종가,대비,등락률,시가,고가,저가,거래량\n"
+    body = "2026/11/26,\"500.10\",1,0.2,\"499.00\",\"501.00\",\"498.00\",1\n2026/11/25,\"499.10\",1,0.2,\"498.00\",\"500.00\",\"497.00\",1\n"
+    a = tmp_path / "a.csv"; a.write_bytes((hdr + body).encode("cp949"))
+    b = tmp_path / "b.csv"; b.write_bytes((hdr + body).encode("cp949"))
+    r = index_csv_from_krx(a, b, tmp_path / "index.csv")
+    rows = list(csv.DictReader((tmp_path / "index.csv").open()))
+    assert r["KOSPI200"] == 2 and rows[0]["date"] == "2026-11-25" and rows[1]["close"] == "500.1"
