@@ -13,6 +13,7 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
+from ..paths import var_root
 from ..backtest.costs import CostModel
 from ..ledger import (DAILY_FIELDS, POSITIONS_FIELDS, TRADES_FIELDS, append_csv, daily_rows, journal_index,
                       position_rows, reconcile, trade_rows)
@@ -25,7 +26,7 @@ PAPER_COSTS = CostModel.kr_v024(slippage_bps=0)
 
 
 def ledger_dir(mode: str, day: date) -> Path:
-    return Path("var/ledger") / mode / f"{day:%Y}"
+    return var_root() / "ledger" / mode / f"{day:%Y}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,8 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     append_csv(d / "positions.csv", POSITIONS_FIELDS, positions)
     append_csv(d / "daily_pnl.csv", DAILY_FIELDS, daily)
     prev_path.write_text(json.dumps({r["book"]: r for r in daily}, ensure_ascii=False, default=str), encoding="utf-8")
-    Path("var/reconcile").mkdir(parents=True, exist_ok=True)
-    (Path("var/reconcile") / f"ledger_{a.date}.json").write_text(json.dumps(
+    (var_root() / "reconcile").mkdir(parents=True, exist_ok=True)
+    (var_root() / "reconcile" / f"ledger_{a.date}.json").write_text(json.dumps(
         {"date": a.date, "recon_status": recon.status, "cash_expected": recon.cash_expected,
          "cash_broker": recon.cash_broker, "qty_diffs": recon.qty_diffs, "diff_krw": recon.diff_krw},
         ensure_ascii=False, indent=2), encoding="utf-8")

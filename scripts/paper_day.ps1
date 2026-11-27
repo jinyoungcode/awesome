@@ -9,7 +9,9 @@
       powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step close     # 15:45 장 마감 후
       powershell -ExecutionPolicy Bypass -File scripts\paper_day.ps1 -Step plan      # 18:30 (자료팀 파일 필요)
   모의 운용 금액: 기본 auto(D-046). 직접 정하려면 어느 단계든  -OperatingCapital 1000000  (모의 예수금 이하, D-044)
-  기록: var\logs\paper_day_<날짜>_<단계>.log
+  D-049 계좌 분리(migrate_var 뒤): 모든 단계에  -Account paper  를 붙입니다 → var\paper\ 사용, 주문 ID PP-
+      (붙이지 않으면 호환 모드 = 기존 var\ 경로. 이 스크립트는 모의 전용이라 live 는 받지 않습니다)
+  기록: var\logs\paper_day_<날짜>_<단계>.log  (-Account paper 면 var\paper\logs\…)
 #>
 param(
     [Parameter(Mandatory = $true)]
@@ -20,12 +22,16 @@ param(
     [string]$SignalDate,
     [string]$ExecDate,
     [string]$OperatingCapital = 'auto',   # D-046 기본 auto(1일차 주문 가능 금액 전액 고정). 숫자로 직접 지정 가능(D-044)
+    [ValidateSet('', 'paper')]
+    [string]$Account = '',                # D-049: migrate_var 뒤에는 'paper'
     [switch]$PromptKeys
 )
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $env:PYTHONUTF8 = '1'
 if ($OperatingCapital) { $env:STOCKKING_OPERATING_CAPITAL = $OperatingCapital }
+if ($Account) { $env:STOCKKING_ACCOUNT = $Account } else { Remove-Item Env:STOCKKING_ACCOUNT -ErrorAction SilentlyContinue }
+$VarRoot = if ($Account) { "var\$Account" } else { 'var' }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 $vpy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
@@ -33,12 +39,12 @@ if (-not (Test-Path $vpy)) {
     Write-Host '가상환경이 없습니다. 먼저 scripts\setup_windows.ps1 을 실행하세요.'
     exit 2
 }
-New-Item -ItemType Directory -Force -Path 'var\logs', 'var\s02' | Out-Null
+New-Item -ItemType Directory -Force -Path "$VarRoot\logs", "$VarRoot\s02" | Out-Null
 $today = Get-Date -Format 'yyyyMMdd'
-$log = "var\logs\paper_day_{0}_{1}.log" -f $today, $Step
+$log = "$VarRoot\logs\paper_day_{0}_{1}.log" -f $today, $Step
 Start-Transcript -Path $log -Append | Out-Null
 $script:Failures = New-Object System.Collections.ArrayList
-$lastPlanFile = 'var\s02\last_plan.json'
+$lastPlanFile = "$VarRoot\s02\last_plan.json"
 
 function Invoke-Step([string]$Title, [string[]]$PyArgs, [switch]$Kis, [switch]$StopOnFail) {
     $argList = @('-m') + $PyArgs

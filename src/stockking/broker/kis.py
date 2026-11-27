@@ -88,7 +88,8 @@ def _debug_log(method: str, path: str, tr_id: str, url: str, body: dict, res: di
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
     rec = {"ts": _t.strftime("%Y-%m-%dT%H:%M:%S"), "method": method, "path": path, "tr_id": tr_id,
            "params": _mask(q), "body": _mask(body or {}), "response": _mask(res)}
-    out = Path("var/logs") / f"kis_raw_{_t.strftime('%Y%m%d')}.jsonl"
+    from ..paths import var_root
+    out = var_root() / "logs" / f"kis_raw_{_t.strftime('%Y%m%d')}.jsonl"
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("a", encoding="utf-8") as fh:
@@ -106,8 +107,9 @@ def default_token_cache() -> Path:
     env = os.environ.get("STOCKKING_TOKEN_CACHE")
     if env:
         return Path(env)
-    from ..config import default_secrets_file
-    return default_secrets_file().parent / "kis_paper_token.json"
+    from ..config import account_profile, profile_dir
+    # 호환 모드: 기존 파일명 유지 / D-049 프로필: %APPDATA%\\stockking\\<프로필>\\kis_token.json
+    return profile_dir() / ("kis_token.json" if account_profile() else "kis_paper_token.json")
 
 
 def _restrict_to_owner(path: Path) -> None:
@@ -154,6 +156,9 @@ class KisPaperClient:
                  base_url: str = KIS_PAPER_BASE_URL, token_cache: Path | None | bool = None) -> None:
         if base_url != KIS_PAPER_BASE_URL or any(m in base_url for m in _KIS_LIVE_HOST_MARKERS):
             raise PermissionError("KisPaperClient 는 모의투자 도메인만 허용합니다 (실계좌 차단)")
+        from ..config import AccountProfileMismatch, account_profile
+        if account_profile() == "live":
+            raise AccountProfileMismatch("STOCKKING_ACCOUNT=live 프로세스에서는 모의 클라이언트를 만들 수 없습니다(D-049)")
         self._creds = creds
         self._base = base_url
         self._transport = transport or _urllib_transport

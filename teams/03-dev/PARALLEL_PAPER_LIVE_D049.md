@@ -62,7 +62,30 @@
 - live 손실 한도는 `limits_for(T0)`(일 −5%, 주 −8%, 최종 −20%), 운용 금액은 15만 원 고정
 - `compare_paper_live` 보고서(신호 일치율, 체결 여부, 슬리피지 비율) → 매매팀·회계팀 전달
 
-## 5. 결정 필요 (총괄)
-1. **var 이동 시점**: 12/2 모의 마감 뒤 `migrate_var` 실행(권장), 아니면 지금 즉시.
-2. **전체 정지 스위치**: 계좌별 킬스위치 외에 두 계좌를 한 번에 멈추는 `KILL_ALL` 파일을 둘지(권장: 둔다. 계좌별 한도는 그대로 따로 적용하고, 대표 수동 비상정지용으로만 사용).
-3. **주문 ID 접두어**: `PP-`/`LV-` 로 확정할지(회계팀 장부 대사에 쓰임).
+## 5. 총괄 결정 (2026-11-27) 과 1단계 구현 현황
+
+| 결정 | 반영 |
+|---|---|
+| migrate_var·키 파일 이동은 12/2 모의 마감 뒤 | `ops/migrate_var.py` (미리보기 기본, `--apply --operator`) — 아래 §6 절차 |
+| KILL_ALL 추가: 두 계좌 신규 매수 차단, 청산 매도 허용(D-026), 계좌별 한도·킬스위치는 그대로 | `ops/kill_all.py` `--status/--trip/--clear`, `KillSwitch` 가 계좌별 파일 + `var\KILL_ALL` 둘 다 확인 |
+| 주문 ID 접두어 PP-/LV- 확정 | `config.ORDER_ID_PREFIX`, 라우터 전송 전 검사, 시작 점검이 다른 계좌 접두어 기록 차단 |
+| 1단계는 `claude/stock-king-03-dev-d049` 에서, 12/2 뒤 총괄 확인 후 dev 병합 | 이 브랜치 |
+| STOCKKING_ACCOUNT 가 없으면 지금 경로로 동작(호환 모드) | `account_profile() is None` → `var\`, `%APPDATA%\stockking\secrets.env`, `kis_paper_token.json`, 주문 ID `SK-`, 잠금 없음, 운용 금액 기본 15만 원(기존과 같음) — `test_compat_mode_keeps_legacy_paths` 와 기존 테스트 210개 그대로 통과 |
+| 2단계(실계좌 코드) 별도 승인 전 착수 안 함 | `KisLiveClient` 없음, `LIVE_TRADING_APPROVED=False` 그대로 |
+
+1단계 구현 목록 (§4 의 1~8): `paths.py`(var 경로 한 곳, 하드코딩 금지 AST 검사), `config.account_profile()`(프로세스당 1회 고정), 계좌별 키 파일·토큰(paper 는 이동 전 기존 파일 사용, live 는 기존 파일 절대 사용 안 함, 다른 계좌 키 섞이면 거부), 접두어, `.lock`(윈도우는 프로세스를 건드리지 않는 방식으로 PID 확인), `migrate_var`, S03·D 시리즈 실계좌 거부(2단계 대비), `paper_day.ps1 -Account paper`. 테스트: `tests/test_d049_accounts.py` 17개.
+
+## 6. 12/2 마감 뒤 전환 절차 (대표 PC, 총괄 확인 후)
+```powershell
+cd C:\stockking\awesome
+git pull                                   # d049 가 dev 에 병합된 뒤
+Remove-Item Env:STOCKKING_ACCOUNT -ErrorAction SilentlyContinue
+$PY = ".\.venv\Scripts\python.exe"
+& $PY -m stockking.ops.migrate_var                         # 미리보기: 옮길 항목 확인
+& $PY -m stockking.ops.migrate_var --apply --operator 대표  # var\ → var\paper\ (백업 var\_pre_d049_backup\), 키 파일 → paper\
+$env:STOCKKING_ACCOUNT = "paper"
+& $PY -m stockking.ops.startup_check                       # 이동된 감사 로그로 정상 시작되는지
+```
+- 이후 모의는 항상 `$env:STOCKKING_ACCOUNT = "paper"`(또는 `paper_day.ps1 -Account paper`). 이 값 없이 실행하면 명령이 거부되어, 빈 `var\` 를 보고 기록을 놓치는 일이 없습니다.
+- 운용 금액: paper 프로필은 `STOCKKING_OPERATING_CAPITAL` 이 없으면 auto(D-049). 이동한 `var\paper\operating_capital.json` 이 있으면 그 값을 그대로 씁니다. 병행 모의를 새로 시작하며 전액으로 다시 고정하려면 그 파일을 지우고 `connect_check` 를 실행합니다(대표 판단).
+- 비상 정지: `& $PY -m stockking.ops.kill_all --trip --reason "…" --operator 대표` / 해제 `--clear --operator 대표`.

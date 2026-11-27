@@ -24,10 +24,16 @@ class RecoveryReport:
     accepted: dict[str, str] = field(default_factory=dict)       # client_order_id -> 증권사 주문번호
     open_check_orders: dict[str, dict] = field(default_factory=dict)  # 접수됐지만 취소 기록이 없는 connect_check 주문
     corrupt_lines: int = 0
+    foreign_order_ids: list[str] = field(default_factory=list)   # D-049: 다른 계좌 접두어 주문 기록
+
+
+# D-049: 프로필별로 감사 로그에 있어도 되는 주문 ID 접두어 (paper 의 SK- 는 migrate_var 로 옮겨진 이전 모의 기록)
+ALLOWED_PREFIXES = {"paper": ("PP-", "SK-"), "live": ("LV-",)}
 
 
 def scan_journal(paths: list[Path] | Path) -> RecoveryReport:
-    rep = RecoveryReport()
+    from ..config import account_profile
+    rep, prof = RecoveryReport(), account_profile()
     pending: dict[str, dict] = {}
     requests: dict[str, dict] = {}
     canceled: set[str] = set()
@@ -45,6 +51,8 @@ def scan_journal(paths: list[Path] | Path) -> RecoveryReport:
             if ev == "order_request":
                 cid = rec["order"]["client_order_id"]
                 rep.seen_order_ids.add(cid)
+                if prof and not cid.startswith(ALLOWED_PREFIXES[prof]):
+                    rep.foreign_order_ids.append(cid)
                 pending[cid] = rec
                 requests[cid] = rec
             elif ev == "risk_decision" and not rec.get("approved"):
@@ -81,6 +89,9 @@ def startup_blockers(report: RecoveryReport, kill_switch: KillSwitch) -> list[st
         o = rec["order"]
         blockers.append(f"취소 기록 없는 점검 주문 {cid} ({o['symbol']} {o['quantity']}주, 증권사 {report.accepted.get(cid, '')}) "
                         "— KIS 에서 취소·체결 확인 후 resolve 필요")
+    if report.foreign_order_ids:
+        blockers.append(f"다른 계좌 접두어 주문 기록 {len(report.foreign_order_ids)}건 "
+                        f"({', '.join(report.foreign_order_ids[:3])}…) — 감사 로그가 섞였습니다. 프로그램팀 확인 필요(D-049)")
     if report.corrupt_lines:
         blockers.append(f"감사 로그 손상 줄 {report.corrupt_lines}개 — 원본 보존 후 확인 필요")
     return blockers

@@ -72,7 +72,11 @@ class KillSwitch:
     def __init__(self, flag_file: str | Path | None = None, memory_only: bool = False) -> None:
         # memory_only=True: 백테스트용. 실운영 킬스위치 파일을 읽지도 쓰지도 않는다(상호 간섭 방지).
         self._memory_only = memory_only
-        self._flag_file = Path(flag_file or os.environ.get("STOCKKING_KILL_SWITCH_FILE", "var/KILL_SWITCH"))
+        from ..paths import kill_all_file, var_root
+        # D-049: 계좌별 킬스위치(var\\<프로필>\\KILL_SWITCH) + 두 계좌 공용 KILL_ALL. 둘 다 신규 매수만 막음(D-026)
+        self._flag_file = Path(flag_file or os.environ.get("STOCKKING_KILL_SWITCH_FILE")
+                               or var_root() / "KILL_SWITCH")
+        self._kill_all = kill_all_file()
         self._tripped_reason: str | None = None
         self._lock = threading.Lock()
 
@@ -95,13 +99,15 @@ class KillSwitch:
     def is_tripped(self) -> bool:
         if self._memory_only:
             return self._tripped_reason is not None
-        return self._tripped_reason is not None or self._flag_file.exists()
+        return self._tripped_reason is not None or self._flag_file.exists() or self._kill_all.exists()
 
     def reason(self) -> str | None:
         if self._tripped_reason:
             return self._tripped_reason
         if not self._memory_only and self._flag_file.exists():
             return f"kill-switch file present: {self._flag_file}"
+        if not self._memory_only and self._kill_all.exists():
+            return f"KILL_ALL 비상 스위치 발동 중(두 계좌 공용): {self._kill_all}"
         return None
 
     def reset(self, operator: str) -> None:

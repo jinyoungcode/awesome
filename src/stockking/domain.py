@@ -36,8 +36,11 @@ class OrderStatus(str, Enum):
 _order_seq = itertools.count(1)
 
 
-def new_client_order_id(prefix: str = "SK") -> str:
-    """중복 주문 방지용 내부 주문번호(멱등 키)."""
+def new_client_order_id(prefix: str | None = None) -> str:
+    """중복 주문 방지용 내부 주문번호(멱등 키). 접두어(D-049): 모의 PP-, 실전 LV-, 호환 모드 SK-."""
+    if prefix is None:
+        from .config import order_id_prefix
+        prefix = order_id_prefix()
     return f"{prefix}-{datetime.now():%Y%m%d%H%M%S}-{next(_order_seq):06d}"
 
 

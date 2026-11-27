@@ -16,6 +16,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from ..paths import var_root
 from .common import Checklist, journal_path
 from .kis_session import add_key_args, make_client
 from .recovery import scan_journal
@@ -87,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     cl.check("중복 주문 0건", not diff["duplicate_broker_ids"], f"{diff['duplicate_broker_ids']}")
     cl.check("미확인 주문 0건", not rep.unresolved, f"{list(rep.unresolved)}")
 
-    out = Path("var/reconcile") / f"{a.date}.json"
+    out = var_root() / "reconcile" / f"{a.date}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"date": a.date, "balance": bal, "broker_orders": rows, "diff": diff,
                                "manual_orders": [r for r in rows if r["odno"].lstrip("0") in diff["unknown_to_system"]],

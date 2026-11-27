@@ -60,14 +60,62 @@ class Secret:
     __str__ = __repr__
 
 
-def default_secrets_file(is_windows: bool | None = None) -> Path:
-    """윈도우: %APPDATA%\\stockking\\secrets.env / 그 외: ~/.config/stockking/secrets.env"""
+# ── D-049 계좌 프로필: 한 프로세스는 한 계좌(paper 또는 live)만 다룬다 ─────────────────────────────
+ACCOUNT_PROFILES = ("paper", "live")
+# 주문 ID 접두어 (D-049 확정: 모의 PP-, 실전 LV-). None = 호환 모드(STOCKKING_ACCOUNT 미설정, 기존 SK-)
+ORDER_ID_PREFIX = {None: "SK", "paper": "PP", "live": "LV"}
+_SECRET_KEY_PREFIX = {"paper": "KIS_PAPER_", "live": "KIS_LIVE_"}
+_fixed_profile: list[str | None] = []
+
+
+class AccountProfileMismatch(RuntimeError):
+    """프로세스 시작 때 정한 계좌 프로필과 다른 계좌를 쓰려는 시도 (D-049)."""
+
+
+def account_profile() -> str | None:
+    """STOCKKING_ACCOUNT=paper|live. 처음 읽은 값으로 프로세스 끝까지 고정하고, 이후 바뀌면 예외.
+    설정이 없으면 None = 호환 모드(D-049 이전 경로 var\\, %APPDATA%\\stockking\\secrets.env 그대로)."""
+    raw = os.environ.get("STOCKKING_ACCOUNT", "").strip().lower() or None
+    if raw is not None and raw not in ACCOUNT_PROFILES:
+        raise ValueError(f"알 수 없는 STOCKKING_ACCOUNT: {raw!r} (paper|live)")
+    if not _fixed_profile:
+        _fixed_profile.append(raw)
+    elif _fixed_profile[0] != raw:
+        raise AccountProfileMismatch(
+            f"이 프로세스는 계좌 프로필 {_fixed_profile[0] or '호환 모드'} 로 시작했습니다 — "
+            f"{raw or '호환 모드'} 로 바꿀 수 없습니다. 창을 따로 열어 실행하세요(D-049)")
+    return raw
+
+
+def _reset_account_profile_for_tests() -> None:
+    _fixed_profile.clear()
+
+
+def order_id_prefix() -> str:
+    return ORDER_ID_PREFIX[account_profile()]
+
+
+def _stockking_dir(is_windows: bool | None = None) -> Path:
     if (os.name == "nt" if is_windows is None else is_windows) and os.environ.get("APPDATA"):
-        return Path(os.environ["APPDATA"]) / "stockking" / "secrets.env"
-    return Path.home() / ".config" / "stockking" / "secrets.env"
+        return Path(os.environ["APPDATA"]) / "stockking"
+    return Path.home() / ".config" / "stockking"
 
 
-DEFAULT_SECRETS_FILE = default_secrets_file()
+def profile_dir(is_windows: bool | None = None) -> Path:
+    """키 파일·토큰 캐시 폴더. 호환 모드: %APPDATA%\\stockking / 프로필: %APPDATA%\\stockking\\<paper|live>"""
+    prof = account_profile()
+    return _stockking_dir(is_windows) / prof if prof else _stockking_dir(is_windows)
+
+
+def default_secrets_file(is_windows: bool | None = None) -> Path:
+    """윈도우: %APPDATA%\\stockking\\secrets.env / 그 외: ~/.config/stockking/secrets.env
+    D-049 프로필: ...\\stockking\\<paper|live>\\secrets.env. paper 는 이동 전(migrate_var 전)이면 기존 파일을 쓴다."""
+    f = profile_dir(is_windows) / "secrets.env"
+    if account_profile() == "paper" and not f.exists():
+        legacy = _stockking_dir(is_windows) / "secrets.env"
+        if legacy.exists():
+            return legacy
+    return f
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -85,7 +133,7 @@ def load_secret_file(path: str | Path | None = None) -> dict[str, str]:
     - 윈도우 권한(ACL)은 scripts/setup_windows.ps1 이 본인만 읽기로 설정
     파일이 없으면 빈 dict.
     """
-    p = Path(path or os.environ.get("STOCKKING_SECRETS_FILE") or DEFAULT_SECRETS_FILE).expanduser().resolve()
+    p = Path(path or os.environ.get("STOCKKING_SECRETS_FILE") or default_secrets_file()).expanduser().resolve()
     if not p.exists():
         return {}
     for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
@@ -103,6 +151,13 @@ def load_secret_file(path: str | Path | None = None) -> dict[str, str]:
             continue
         k, v = line.split("=", 1)
         values[k.strip()] = v.strip().strip('"').strip("'")
+    prof = account_profile()
+    if prof:   # D-049: 모의 키 파일에 실전 키(또는 그 반대)가 섞이면 실행 거부
+        other = _SECRET_KEY_PREFIX["live" if prof == "paper" else "paper"]
+        wrong = sorted(k for k in values if k.startswith(other))
+        if wrong:
+            raise InsecureSecretFile(f"{prof} 계좌 키 파일에 다른 계좌 키 {', '.join(wrong)} 가 있습니다: {p} — "
+                                     "계좌별 파일로 나누세요(D-049)")
     return values
 
 

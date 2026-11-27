@@ -12,10 +12,12 @@ from ..config import Secret
 def add_key_args(ap) -> None:
     ap.add_argument("--prompt-keys", action="store_true",
                     help="앱키·시크릿을 터미널에서 직접 입력(화면 표시 안 됨, 디스크 저장 안 함)")
-    ap.add_argument("--secrets-file", help="비밀값 파일 경로 (기본 ~/.config/stockking/secrets.env, chmod 600)")
+    ap.add_argument("--secrets-file", help="비밀값 파일 경로 (기본 %%APPDATA%%\\stockking[\\<계좌>]\\secrets.env)")
 
 
 def make_client(args) -> KisPaperClient:
+    from .common import acquire_account_lock
+    acquire_account_lock()   # D-049: 같은 계좌 프로필로 주문 가능한 프로세스는 하나만
     if args.secrets_file:
         os.environ["STOCKKING_SECRETS_FILE"] = args.secrets_file
     if args.prompt_keys:

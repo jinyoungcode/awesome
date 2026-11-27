@@ -23,11 +23,20 @@ STARTING_CAPITAL = 150_000
 SLOTS = 5   # 동시 보유 한도 → 주문 목표 = (시작 자금 + 실현 순손익) ÷ 5 = 30,000원
 
 
-AUTO_CAPITAL_FILE = "var/operating_capital.json"
+def _auto_capital_file() -> str:
+    from ..paths import var_root
+    return os.environ.get("STOCKKING_AUTO_CAPITAL_FILE") or str(var_root() / "operating_capital.json")
+
+
+def _capital_setting() -> str:
+    """STOCKKING_OPERATING_CAPITAL. 없으면: 병행 모의(STOCKKING_ACCOUNT=paper)는 auto(D-049), 그 외 15만 원."""
+    from ..config import account_profile
+    raw = os.environ.get("STOCKKING_OPERATING_CAPITAL", "").strip()
+    return raw or ("auto" if account_profile() == "paper" else "")
 
 
 def _auto_requested() -> bool:
-    return os.environ.get("STOCKKING_OPERATING_CAPITAL", "").strip().lower() == "auto"
+    return _capital_setting().lower() == "auto"
 
 
 def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today: str | None = None) -> int:
@@ -38,7 +47,7 @@ def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today:
     from pathlib import Path
     if resolve_stage() is not CapitalStage.PAPER:
         raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
-    f = Path(path or os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+    f = Path(path or _auto_capital_file())
     if f.exists():
         return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
     if broker_orderable_cash <= 0:
@@ -54,13 +63,13 @@ def operating_capital() -> int:
     """운용 기준 자금. 기본 15만 원(D-032, T0 실전 고정).
     모의투자는 STOCKKING_OPERATING_CAPITAL 로 모의 계좌 예수금 이하 임의 금액(D-044), 또는 'auto'
     (1일차 시작 시점 주문 가능 금액 전액을 고정, D-046)를 쓴다. 비중·손실 한도·1주 예외는 이 금액 기준 비율."""
-    raw = os.environ.get("STOCKKING_OPERATING_CAPITAL", "").replace(",", "").replace("_", "").strip()
+    raw = _capital_setting().replace(",", "").replace("_", "").strip()
     if raw.lower() == "auto":
         import json
         from pathlib import Path
         if resolve_stage() is not CapitalStage.PAPER:
             raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
-        f = Path(os.environ.get("STOCKKING_AUTO_CAPITAL_FILE", AUTO_CAPITAL_FILE))
+        f = Path(_auto_capital_file())
         if not f.exists():
             raise RuntimeError("운용 금액 auto 가 아직 고정되지 않았습니다 — 먼저 connect_check 를 실행하세요(D-046)")
         return int(json.loads(f.read_text(encoding="utf-8"))["capital"])

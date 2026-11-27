@@ -161,11 +161,14 @@ PLAN_FIELDS = ["signal_date", "exec_date", "strategy_id", "ticker", "side", "ord
                "limit_price", "init_stop", "risk_krw", "reason_code", "rank", "exception"]
 
 
-def write_order_plan(rows: list[PlanRow], out_dir: str | Path = "var/order_plan",
+def write_order_plan(rows: list[PlanRow], out_dir: str | Path | None = None,
                      *, signal_date: date | None = None) -> Path:
     day = signal_date.strftime("%Y%m%d") if signal_date else (
         rows[0].signal_date.replace("-", "") if rows else "empty"
     )
+    if out_dir is None:
+        from ..paths import var_root
+        out_dir = var_root() / "order_plan"
     out = Path(out_dir) / f"order_plan_{day}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(mode="w", newline="", encoding="utf-8", dir=out.parent,

@@ -4,7 +4,7 @@ from stockking.backtest.costs import CostModel
 
 # 테스트가 대표 PC 의 실제 설정·파일을 읽지 않도록 격리할 환경변수 (1일차 실측: 5건 실패 원인)
 _ISOLATE_UNSET = (
-    "STOCKKING_MODE", "STOCKKING_CAPITAL_STAGE", "STOCKKING_OPERATING_CAPITAL", "STOCKKING_KR_SELL_MODE",
+    "STOCKKING_MODE", "STOCKKING_ACCOUNT", "STOCKKING_CAPITAL_STAGE", "STOCKKING_OPERATING_CAPITAL", "STOCKKING_KR_SELL_MODE",
     "KIS_PAPER_APP_KEY", "KIS_PAPER_APP_SECRET", "KIS_PAPER_ACCOUNT_NO", "KIS_PAPER_ACCOUNT_PRODUCT",
     "OneDrive", "OneDriveConsumer", "OneDriveCommercial",
 )
@@ -28,4 +28,9 @@ def isolate_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("STOCKKING_TOKEN_CACHE", str(tmp_path / "kis_paper_token.json"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("STOCKKING_KILL_ALL_FILE", str(tmp_path / "KILL_ALL"))
     monkeypatch.chdir(tmp_path)
+    from stockking import config
+    config._reset_account_profile_for_tests()   # D-049: 계좌 프로필은 프로세스당 1회 고정 → 테스트마다 초기화
+    yield
+    config._reset_account_profile_for_tests()

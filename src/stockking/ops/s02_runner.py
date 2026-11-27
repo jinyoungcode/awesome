@@ -23,6 +23,7 @@ from dataclasses import asdict, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from ..paths import var_root
 from .. import config
 from ..audit import Journal
 from ..config import TradingMode
@@ -40,8 +41,8 @@ from ..strategy.s02 import STRATEGY_ID, HeldPosition, S02Params, build_order_pla
 from .common import journal_path
 from .tech_orders import assert_paper_only, load_records
 
-STATE_DIR = Path("var/s02")
-PLAN_DIR = Path("var/order_plan")
+STATE_DIR = var_root() / "s02"
+PLAN_DIR = var_root() / "order_plan"
 INDEX_OF = {"KOSPI": "KOSPI200", "KOSDAQ": "KOSDAQ150"}
 
 
@@ -334,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"주문계획 {len(rows)}건 → {out}")
             return 0
         rep = compare_signals(rows, submitted(load_records(), sd.isoformat()))
-        out = Path("var/reconcile") / f"signal_{sd:%Y%m%d}.json"
+        out = var_root() / "reconcile" / f"signal_{sd:%Y%m%d}.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"date": sd.isoformat(), **rep, "plan_count": len(rows), "regime": dict(regime_diag)},
                                   ensure_ascii=False, indent=2, default=str),

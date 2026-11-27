@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import atexit
+import json
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-JOURNAL_DIR = Path("var/journal")
+from ..paths import layout_error, var_root
+
+JOURNAL_DIR = var_root() / "journal"
 
 
 def journal_path(day: date | None = None) -> Path:
@@ -39,9 +44,74 @@ def die(msg: str) -> None:
     raise SystemExit(2)
 
 
+def _pid_alive(pid: int) -> bool:
+    """윈도우는 os.kill(pid, 0) 이 프로세스를 종료시킬 수 있어 OpenProcess 로 확인한다."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259   # STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def acquire_account_lock() -> Path | None:
+    """D-049: 같은 계좌 프로필의 주문 가능 프로세스는 하나만. 호환 모드에서는 잠그지 않는다(기존 동작 유지).
+    비정상 종료로 남은 잠금은 PID 가 살아 있지 않으면 넘겨받는다."""
+    from ..config import account_profile
+    prof = account_profile()
+    if prof is None:
+        return None
+    lock = var_root() / ".lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                held = json.loads(lock.read_text(encoding="utf-8")).get("pid", 0)
+            except (OSError, ValueError):
+                held = 0
+            if held == os.getpid():
+                return lock
+            if _pid_alive(int(held)):
+                raise RuntimeError(f"{prof} 계좌 프로그램이 이미 실행 중입니다(PID {held}) — 그 창의 작업이 끝난 뒤 "
+                                   "다시 실행하세요(D-049: 계좌당 주문 프로세스 1개)")
+            lock.unlink(missing_ok=True)   # 남은 잠금 해제
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"pid": os.getpid(), "profile": prof}, fh)
+        atexit.register(_release_lock, lock)
+        return lock
+    raise RuntimeError(f"잠금 파일을 만들 수 없습니다: {lock}")
+
+
+def _release_lock(lock: Path) -> None:
+    try:
+        if json.loads(lock.read_text(encoding="utf-8")).get("pid") == os.getpid():
+            lock.unlink()
+    except (OSError, ValueError):
+        pass
+
+
 def run_cli(main) -> int:
     """운영 명령 공통 실행: 예상된 오류(토큰 제한·키 없음·한도 초과 등)는 traceback 대신 한글 안내 후 종료코드 2."""
     try:
+        if (err := layout_error()):
+            raise RuntimeError(err)
         return main()
     except KeyboardInterrupt:
         print("\n중단: 사용자가 Ctrl+C 로 멈췄습니다. 재시작 전에 'python -m stockking.ops.startup_check' 를 실행하세요.",

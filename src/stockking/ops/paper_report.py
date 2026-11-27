@@ -11,11 +11,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ..paths import var_root
 from .common import JOURNAL_DIR
 from .recovery import scan_journal
 from .tech_orders import load_records
 
-RECONCILE_DIR = Path("var/reconcile")
+RECONCILE_DIR = var_root() / "reconcile"
 
 
 def c2_evidence(records: list[dict], signals: list[dict]) -> list[dict]:
