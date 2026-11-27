@@ -138,9 +138,13 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     if not k2 or (k2_name and "200" not in k2_name):
         raise RuntimeError(f"KOSPI200 지수 확인 실패 (코드 {KOSPI200_CODE}, 이름 '{k2_name}')")
     kq_code, kq = resolve_kosdaq150(q, istart, T, kosdaq150_code)
-    for nm, rows in (("KOSPI200", k2), ("KOSDAQ150", kq)):
-        if len(rows) < MIN_INDEX_ROWS:
-            raise RuntimeError(f"{nm} 지수 일봉 {len(rows)}행 < {MIN_INDEX_ROWS}행 — 200일선(국면 필터) 계산 불가. 자료팀에 알려 주세요")
+    short = {nm: len(rows) for nm, rows in (("KOSPI200", k2), ("KOSDAQ150", kq)) if len(rows) < MIN_INDEX_ROWS}
+    if short:
+        msg = f"지수 일봉 {short} < {MIN_INDEX_ROWS}행 — 200일선(국면 필터) 계산 불가, 입력 파일을 만들지 않음. 자료팀에 알려 주세요"
+        (out / "manifest.json").write_text(json.dumps({"T": T.isoformat(), "status": "FAILED", "warning": msg,
+                                                       "index_rows": short, "min_index_rows": MIN_INDEX_ROWS},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+        raise RuntimeError(msg)
     calendar = [r["date"] for r in k2]
     if calendar[-1] != T.isoformat():
         raise RuntimeError(f"{T}는 거래일이 아니거나 지수 데이터가 아직 없습니다 (마지막 {calendar[-1]})")

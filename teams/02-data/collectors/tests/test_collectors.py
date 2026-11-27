@@ -389,3 +389,7 @@ def test_s02_inputs_refuses_short_index(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="200행"):
         s02_inputs.build(KisQuotes(FakeClient(), log=lambda *_: None), T, ["005930"], [], tmp_path,
                          log=lambda *_: None, status_now=True)
+    import json
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert m["status"] == "FAILED" and "200" in m["warning"]
+    assert not (tmp_path / "bars.csv").exists() and not (tmp_path / "index.csv").exists()

@@ -128,4 +128,8 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RuntimeError as e:  # 입력 검증 실패 등: 메시지와 함께 실패 코드 2
+        print(f"[실패] {e}", file=sys.stderr)
+        raise SystemExit(2)
