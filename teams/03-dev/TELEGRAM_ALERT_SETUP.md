@@ -27,10 +27,10 @@ https://api.telegram.org/bot<토큰>/getUpdates
 - 확인한 뒤 브라우저 방문 기록에서 이 주소를 지워 주세요(토큰이 주소에 들어 있음).
 
 ## 5. 키 파일에 저장 (PowerShell)
-실전 계좌용 키 폴더(D-049)에 저장합니다. 모의 키 파일과는 다른 파일입니다.
+알림은 모의·실전 두 계좌가 함께 쓰므로, 계좌 키 파일과 따로 **알림 전용 파일**에 저장합니다(총괄 결정 §7.9).
 ```powershell
-New-Item -ItemType Directory -Force "$env:APPDATA\stockking\live" | Out-Null
-notepad "$env:APPDATA\stockking\live\secrets.env"
+New-Item -ItemType Directory -Force "$env:APPDATA\stockking" | Out-Null
+notepad "$env:APPDATA\stockking\notify.env"
 ```
 메모장에 두 줄을 넣고 저장합니다(따옴표 없이):
 ```
@@ -39,11 +39,12 @@ TELEGRAM_CHAT_ID=4단계에서_확인한_숫자
 ```
 그다음 본인 계정만 읽도록 권한을 잠급니다:
 ```powershell
-icacls "$env:APPDATA\stockking\live\secrets.env" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
+icacls "$env:APPDATA\stockking\notify.env" /inheritance:r /grant:r "$($env:USERNAME):(R,W)"
 ```
 ▶ `처리된 파일: 1` 이 나오면 끝입니다.
+- 이 파일에는 텔레그램 두 줄만 넣습니다. KIS 키를 넣으면 프로그램이 실행을 거부합니다.
+- 이미 `stockking\live\secrets.env` 에 텔레그램 줄을 넣으셨다면 그 두 줄을 `notify.env` 로 옮겨 주세요.
 - 이 폴더는 OneDrive 밖(`%APPDATA%`)이라 클라우드로 복사되지 않습니다.
-- 나중에 실전 KIS 키도 이 파일에 넣습니다(`KIS_LIVE_*`). 모의 키(`KIS_PAPER_*`)를 여기에 넣으면 프로그램이 실행을 거부합니다.
 
 ## 6. 안전 수칙
 - 토큰이 새었다고 생각되면 BotFather 에서 `/revoke` → 새 토큰을 받아 5단계 파일만 고칩니다.
@@ -53,4 +54,4 @@ icacls "$env:APPDATA\stockking\live\secrets.env" /inheritance:r /grant:r "$($env
 ## 7. 프로그램 쪽 (2단계에서 구현 예정)
 - `stockking.notify.telegram`: 표준 라이브러리 HTTPS 1회 전송, 실패해도 주문·차단 동작은 그대로(실패는 감사 로그·콘솔).
 - 시험 명령 `python -m stockking.ops.notify --test` 로 휴대폰 도착을 확인한 뒤 운용에 넣습니다.
-- 첫 알림 대상: L_TECH 오버나이트 경보(§7.4). 이후 킬스위치·손실 한도 발동 알림에도 같은 채널을 씁니다(총괄 승인 시).
+- 알림 대상(총괄 결정 §7.9): 실전은 킬스위치·KILL_ALL 발동/해제, 손실 한도 도달, 시작 차단, L_TECH 경보. 모의는 킬스위치·KILL_ALL 만 `[모의]` 표시로. 같은 사건은 한 번만 보냅니다.
