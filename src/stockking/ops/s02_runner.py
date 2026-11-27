@@ -41,20 +41,30 @@ from ..strategy.s02 import STRATEGY_ID, HeldPosition, S02Params, build_order_pla
 from .common import journal_path
 from .tech_orders import assert_paper_only, load_records
 
-STATE_DIR = var_root() / "s02"
-PLAN_DIR = var_root() / "order_plan"
+STATE_DIR: Path | None = None   # 기본은 호출 시점 var_root()/s02
+PLAN_DIR: Path | None = None    # 기본은 호출 시점 var_root()/order_plan
+
+
+def _state_dir() -> Path:
+    return STATE_DIR or var_root() / "s02"
+
+
+def _plan_dir() -> Path:
+    return PLAN_DIR or var_root() / "order_plan"
 INDEX_OF = {"KOSPI": "KOSPI200", "KOSDAQ": "KOSDAQ150"}
 
 
 # ---------------- 가상 장부 ----------------
-def load_state(path: Path = STATE_DIR / "state.json") -> dict:
+def load_state(path: Path | None = None) -> dict:
+    path = path or _state_dir() / "state.json"
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     cap = operating_capital()
     return {"starting_cash": cap, "cash": cap, "realized_pnl": 0, "positions": {}, "last_exits": {}, "peak_equity": cap}
 
 
-def save_state(state: dict, path: Path = STATE_DIR / "state.json") -> None:
+def save_state(state: dict, path: Path | None = None) -> None:
+    path = path or _state_dir() / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -327,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.action in ("plan", "verify"):
         rows = make_plan(state, *_inputs(a), sd, ed)
         if a.action == "plan":
-            out = write_order_plan(rows, PLAN_DIR, signal_date=sd)
+            out = write_order_plan(rows, _plan_dir(), signal_date=sd)
             journal.write("s02_plan", signal_date=sd.isoformat(), rows=[asdict(r) for r in rows],
                           plan_count=len(rows), regime=dict(regime_diag))
             for name, d in regime_diag.items():
@@ -346,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.action == "submit":
         if not a.operator:
             ap.error("--operator 필요")
-        plan_path = PLAN_DIR / f"order_plan_{sd:%Y%m%d}.csv"
+        plan_path = _plan_dir() / f"order_plan_{sd:%Y%m%d}.csv"
         if not plan_path.exists():
             print(f"중단: 주문계획 파일 없음 ({plan_path})")
             return 2

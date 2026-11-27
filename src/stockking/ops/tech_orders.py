@@ -31,7 +31,7 @@ from ..krx import floor_to_tick, marketable_sell_limit
 from ..risk import KillSwitch, RiskGate
 from ..risk.stages import capital_error
 from ..risk.stages import limits_for, resolve_stage
-from .common import JOURNAL_DIR, journal_path
+from .common import journal_dir as _journal_dir, journal_path
 
 REASON_CODE = "T_TECH"
 STRATEGY_ID = "T_TECH"
@@ -58,7 +58,8 @@ def assert_paper_only(mode: TradingMode, broker) -> None:
 
 
 # ---------------- 발동 조건 ----------------
-def load_records(journal_dir: Path = JOURNAL_DIR) -> list[dict]:
+def load_records(journal_dir: Path | None = None) -> list[dict]:
+    journal_dir = journal_dir or _journal_dir()
     recs = []
     for p in sorted(Path(journal_dir).glob("*.jsonl")):
         for line in p.read_text(encoding="utf-8").splitlines():

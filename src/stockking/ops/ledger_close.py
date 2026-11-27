@@ -48,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     if a.open:
         from ..risk.stages import _auto_requested, fix_auto_capital, operating_capital
         if _auto_requested():   # D-046: 1일차 첫 실행 시점의 주문 가능 금액 전액으로 고정
-            print(f"운용 금액 auto: {fix_auto_capital(bal['cash_d2'] or bal['cash']):,}원 (var/operating_capital.json)")
+            from .common import fix_capital_logged
+            print(f"운용 금액 auto: {fix_capital_logged(bal['cash_d2'] or bal['cash'], command='ledger_close'):,}원")
         state = {"date": a.date, "cash_d2": bal["cash_d2"], "equity": {"AUTO": bal["total_equity"]},
                  "principal": operating_capital(),   # D-046: 장부 원금 = 운용 금액
                  "qty": {s: v["qty"] for s, v in bal["details"].items()}}

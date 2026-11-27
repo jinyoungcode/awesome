@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import replace
 from enum import Enum
 
@@ -39,9 +40,41 @@ def _auto_requested() -> bool:
     return _capital_setting().lower() == "auto"
 
 
-def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today: str | None = None) -> int:
-    """D-046: 'auto' 이면 모의 1일차 시작 시점 주문 가능 금액 전액을 운용 금액으로 한 번 고정 저장.
-    이미 고정돼 있으면 그 값을 그대로 쓴다(5거래일 내내 같은 값)."""
+def _pending_file(capital_file: Path) -> Path:
+    return capital_file.parent / "archive" / "PENDING_REFIX.json"
+
+
+def archive_capital_file(reason: str, capital_file: str | Path | None = None, today: str | None = None) -> dict | None:
+    """운용 금액 고정 파일을 archive\\operating_capital_<고정일>.json 으로 옮기고(삭제 안 함), 다음 고정 때
+    감사 로그에 남길 이전 값·사유를 PENDING_REFIX.json 에 둔다. 파일이 없으면 None.
+    사용: migrate_var --apply(사유 'D-049 restart'), connect_check --refix-capital(대표 승인)."""
+    import json
+    from datetime import date
+    from pathlib import Path
+    f = Path(capital_file or _auto_capital_file())
+    if not f.exists():
+        return None
+    rec = json.loads(f.read_text(encoding="utf-8"))
+    arch = f.parent / "archive"
+    arch.mkdir(parents=True, exist_ok=True)
+    stem = f"operating_capital_{str(rec.get('fixed_on') or today or date.today().isoformat()).replace('-', '')}"
+    dest, n = arch / f"{stem}.json", 1
+    while dest.exists():
+        n += 1
+        dest = arch / f"{stem}_{n}.json"
+    rec |= {"archived_on": today or date.today().isoformat(), "archive_reason": reason}
+    dest.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+    f.unlink()
+    _pending_file(f).write_text(json.dumps({"previous_capital": rec.get("capital"), "previous_fixed_on": rec.get("fixed_on"),
+                                            "reason": reason, "archived_to": dest.name}, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+    return rec
+
+
+def fix_auto_capital_detail(broker_orderable_cash: int, path: str | None = None,
+                            today: str | None = None) -> tuple[int, dict | None]:
+    """fix_auto_capital 과 같고, 이번에 새로 고정했으면 (값, {이전 값·사유}) — 이미 고정돼 있었으면 (값, None).
+    새로 고정할 때 이전 값이 보관돼 있지 않으면 사유는 '최초 고정'."""
     import json
     from datetime import date
     from pathlib import Path
@@ -49,14 +82,24 @@ def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today:
         raise ValueError("운용 금액 auto 는 모의투자 전용 — 실전 T0는 15만 원 고정(D-031·D-032)")
     f = Path(path or _auto_capital_file())
     if f.exists():
-        return int(json.loads(f.read_text(encoding="utf-8"))["capital"])
+        return int(json.loads(f.read_text(encoding="utf-8"))["capital"]), None
     if broker_orderable_cash <= 0:
         raise ValueError("모의 주문 가능 금액이 0 이하라 운용 금액을 정할 수 없습니다")
+    pf = _pending_file(f)
+    prev = json.loads(pf.read_text(encoding="utf-8")) if pf.exists() else {"previous_capital": None, "reason": "최초 고정"}
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(json.dumps({"capital": int(broker_orderable_cash), "fixed_on": today or date.today().isoformat(),
-                             "source": "KIS 모의 D+2 예수금(주문 가능 금액 근사)", "decision": "D-046"},
+                             "source": "KIS 모의 D+2 예수금(주문 가능 금액 근사)", "decision": "D-046",
+                             "previous_capital": prev.get("previous_capital"), "fix_reason": prev.get("reason")},
                             ensure_ascii=False, indent=2), encoding="utf-8")
-    return int(broker_orderable_cash)
+    pf.unlink(missing_ok=True)
+    return int(broker_orderable_cash), prev
+
+
+def fix_auto_capital(broker_orderable_cash: int, path: str | None = None, today: str | None = None) -> int:
+    """D-046: 'auto' 이면 모의 1일차 시작 시점 주문 가능 금액 전액을 운용 금액으로 한 번 고정 저장.
+    이미 고정돼 있으면 그 값을 그대로 쓴다(5거래일 내내 같은 값). D-049: 다시 고정은 archive_capital_file 뒤에만."""
+    return fix_auto_capital_detail(broker_orderable_cash, path, today)[0]
 
 
 def operating_capital() -> int:

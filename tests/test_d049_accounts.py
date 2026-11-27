@@ -249,10 +249,50 @@ def test_migrate_var_moves_and_guards(profile):
     assert layout_error() and "STOCKKING_ACCOUNT" in layout_error()   # 이동 뒤 호환 모드 실행은 거부
     with pytest.raises(RuntimeError, match="이미 이동"):
         migrate_var.apply("대표")
+    assert not Path("var/paper/operating_capital.json").exists()           # 기존 값은 지우지 않고 보관
+    arch = json.loads(Path("var/paper/archive/operating_capital_20261202.json").read_text(encoding="utf-8")) \
+        if Path("var/paper/archive/operating_capital_20261202.json").exists() else \
+        json.loads(next(Path("var/paper/archive").glob("operating_capital_*.json")).read_text(encoding="utf-8"))
+    assert arch["capital"] == 10_000_000 and arch["archive_reason"] == "D-049 restart"
     profile("paper")
-    assert layout_error() is None
-    from stockking.risk.stages import operating_capital
-    assert operating_capital() == 10_000_000 and config.default_secrets_file() == base / "paper" / "secrets.env"
+    assert layout_error() is None and config.default_secrets_file() == base / "paper" / "secrets.env"
+    _check_refix_after_migration()
+
+
+def _journal_events(kind):
+    out = []
+    for f in sorted(Path("var/paper/journal").glob("*.jsonl")):
+        out += [r for r in map(json.loads, f.read_text(encoding="utf-8").splitlines()) if r.get("event") == kind]
+    return out
+
+
+def _check_refix_after_migration():
+    """T0 시작(paper 첫 connect_check) = 전액으로 다시 고정 + 이전 값·사유 감사 로그. 그 뒤로는 이어 씀."""
+    from stockking.ops.common import fix_capital_logged
+    from stockking.risk.stages import archive_capital_file, operating_capital
+    with pytest.raises(RuntimeError, match="고정되지 않았"):
+        operating_capital()
+    assert fix_capital_logged(9_800_000, operator="대표", command="connect_check") == 9_800_000
+    ev = _journal_events("capital_fixed")
+    assert len(ev) == 1 and ev[0]["capital"] == 9_800_000 and ev[0]["previous_capital"] == 10_000_000
+    assert ev[0]["reason"] == "D-049 restart"
+    assert fix_capital_logged(5_000_000) == 9_800_000 and len(_journal_events("capital_fixed")) == 1   # 이어 씀
+    assert operating_capital() == 9_800_000
+    archive_capital_file("refix (승인: 대표)")                     # --refix-capital 경로
+    assert fix_capital_logged(9_900_000, operator="대표") == 9_900_000
+    ev = _journal_events("capital_fixed")
+    assert len(ev) == 2 and ev[1]["previous_capital"] == 9_800_000 and ev[1]["reason"].startswith("refix")
+    assert len(list(Path("var/paper/archive").glob("operating_capital_*.json"))) == 2
+
+
+def test_refix_capital_requires_operator_before_connecting(profile, monkeypatch):
+    from stockking.ops import connect_check
+    profile("paper")
+    with pytest.raises(ValueError, match="operator"):
+        connect_check.main(["--refix-capital"])
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "1000000")
+    with pytest.raises(ValueError, match="auto"):
+        connect_check.main(["--refix-capital", "--operator", "대표"])
 
 
 def test_run_cli_refuses_compat_mode_after_migration(profile, capsys):

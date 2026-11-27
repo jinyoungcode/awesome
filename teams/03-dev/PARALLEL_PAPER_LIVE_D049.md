@@ -87,5 +87,8 @@ $env:STOCKKING_ACCOUNT = "paper"
 & $PY -m stockking.ops.startup_check                       # 이동된 감사 로그로 정상 시작되는지
 ```
 - 이후 모의는 항상 `$env:STOCKKING_ACCOUNT = "paper"`(또는 `paper_day.ps1 -Account paper`). 이 값 없이 실행하면 명령이 거부되어, 빈 `var\` 를 보고 기록을 놓치는 일이 없습니다.
-- 운용 금액: paper 프로필은 `STOCKKING_OPERATING_CAPITAL` 이 없으면 auto(D-049). 이동한 `var\paper\operating_capital.json` 이 있으면 그 값을 그대로 씁니다. 병행 모의를 새로 시작하며 전액으로 다시 고정하려면 그 파일을 지우고 `connect_check` 를 실행합니다(대표 판단).
+- 운용 금액(총괄 결정 11/27): 병행 모의는 **T0 시작일(paper 첫 실행일)의 주문 가능 금액 전액으로 다시 고정**합니다. 5일 점검 주문 손익이 병행 모의 기준 금액에 섞이지 않게 하기 위해서입니다.
+  - `migrate_var --apply` 는 기존 `operating_capital.json` 을 지우지 않고 `var\paper\archive\operating_capital_<고정일>.json` 으로 보관합니다.
+  - paper 첫 `connect_check`(또는 `ledger_close --open`)가 새로 고정하고, 감사 로그에 `capital_fixed`(새 값·이전 값·사유 `D-049 restart`)를 남깁니다.
+  - 그 뒤로는 파일 값을 이어 씁니다. 다시 고정하려면 대표 승인 뒤 `connect_check --refix-capital --operator 대표` 를 실행합니다. 이전 파일은 archive 로 보관되고 사유 `refix (승인: 대표)` 가 기록됩니다.
 - 비상 정지: `& $PY -m stockking.ops.kill_all --trip --reason "…" --operator 대표` / 해제 `--clear --operator 대표`.

@@ -12,11 +12,15 @@ import json
 from pathlib import Path
 
 from ..paths import var_root
-from .common import JOURNAL_DIR
+from .common import journal_dir
 from .recovery import scan_journal
 from .tech_orders import load_records
 
-RECONCILE_DIR = var_root() / "reconcile"
+RECONCILE_DIR: Path | None = None   # 테스트가 바꿀 수 있음. 기본은 호출 시점 var_root()/reconcile
+
+
+def _reconcile_dir() -> Path:
+    return RECONCILE_DIR or var_root() / "reconcile"
 
 
 def c2_evidence(records: list[dict], signals: list[dict]) -> list[dict]:
@@ -101,17 +105,17 @@ def build_report(records: list[dict], reconciles: list[dict], recovery,
 
 def main() -> int:
     records = load_records()
-    reconciles = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("[0-9]*.json"))]
-    ledgers = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("ledger_*.json"))]
-    signals = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(RECONCILE_DIR.glob("signal_*.json"))]
-    rows = build_report(records, reconciles, scan_journal(sorted(JOURNAL_DIR.glob("*.jsonl"))), ledgers, signals)
+    reconciles = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(_reconcile_dir().glob("[0-9]*.json"))]
+    ledgers = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(_reconcile_dir().glob("ledger_*.json"))]
+    signals = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(_reconcile_dir().glob("signal_*.json"))]
+    rows = build_report(records, reconciles, scan_journal(sorted(journal_dir().glob("*.jsonl"))), ledgers, signals)
     print("D-024 3일 모의 점검표")
     for name, st, why in rows:
         print(f"  [{st:7}] {name} — {why}")
     done = all(st == "PASS" for _, st, _ in rows)
     from datetime import date as _d
-    RECONCILE_DIR.mkdir(parents=True, exist_ok=True)
-    (RECONCILE_DIR / f"paper_report_{_d.today():%Y%m%d}.json").write_text(json.dumps(
+    _reconcile_dir().mkdir(parents=True, exist_ok=True)
+    (_reconcile_dir() / f"paper_report_{_d.today():%Y%m%d}.json").write_text(json.dumps(
         {"rows": [{"item": n, "status": st, "evidence": why} for n, st, why in rows],
          "c2_evidence": c2_evidence(records, signals)}, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print("\n종합: " + ("통과" if done else "미완료 — 미통과 시 기간 연장(D-024)"))

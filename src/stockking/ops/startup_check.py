@@ -11,19 +11,19 @@ from pathlib import Path
 
 from ..audit import Journal
 from ..risk import KillSwitch
-from .common import JOURNAL_DIR, journal_path
+from .common import journal_dir, journal_path
 from .recovery import record_resolution, scan_journal, startup_blockers
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--journal-dir", default=str(JOURNAL_DIR))
+    ap.add_argument("--journal-dir", default=None)
     ap.add_argument("--resolve", help="미확인 주문 client_order_id")
     ap.add_argument("--outcome", help="not_sent | filled | unfilled_canceled | partially_filled")
     ap.add_argument("--operator", default="")
     ap.add_argument("--note", default="")
     a = ap.parse_args(argv)
-    paths = sorted(Path(a.journal_dir).glob("*.jsonl"))
+    paths = sorted(Path(a.journal_dir or journal_dir()).glob("*.jsonl"))
     if a.resolve:
         j = Journal(journal_path())
         record_resolution(j, a.resolve, a.outcome or "", a.operator, a.note)

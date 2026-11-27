@@ -12,11 +12,13 @@ from pathlib import Path
 
 from ..paths import layout_error, var_root
 
-JOURNAL_DIR = var_root() / "journal"
+def journal_dir() -> Path:
+    """감사 로그 폴더 — 호출 시점의 계좌 프로필 기준(var\\<프로필>\\journal, 호환 모드 var\\journal)."""
+    return var_root() / "journal"
 
 
 def journal_path(day: date | None = None) -> Path:
-    return JOURNAL_DIR / f"{(day or date.today()):%Y%m%d}.jsonl"
+    return journal_dir() / f"{(day or date.today()):%Y%m%d}.jsonl"
 
 
 @dataclass
@@ -37,6 +39,20 @@ class Checklist:
         n_ok = sum(ok for _, ok, _ in self.results)
         print(f"\n== {self.title}: {'통과' if self.passed else '미통과'} ({n_ok}/{len(self.results)}) ==")
         return 0 if self.passed else 1
+
+
+def fix_capital_logged(orderable: int, operator: str = "", command: str = "") -> int:
+    """운용 금액 auto 고정 + 새로 고정했으면 감사 로그(capital_fixed: 새 값·이전 값·사유) 기록 (D-046·D-049)."""
+    from ..audit import Journal
+    from ..risk.stages import fix_auto_capital_detail
+    capital, prev = fix_auto_capital_detail(orderable)
+    if prev is not None:
+        Journal(journal_path()).write("capital_fixed", capital=capital, previous_capital=prev.get("previous_capital"),
+                                      previous_fixed_on=prev.get("previous_fixed_on"), reason=prev.get("reason"),
+                                      operator=operator, command=command)
+        was = f"{prev['previous_capital']:,}원 → " if prev.get("previous_capital") else ""
+        print(f"  운용 금액 새로 고정: {was}{capital:,}원 (사유: {prev.get('reason')}) — 감사 로그 기록")
+    return capital
 
 
 def die(msg: str) -> None:

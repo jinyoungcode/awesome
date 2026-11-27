@@ -7,6 +7,8 @@
 - 옮기기 전에 var\\ 전체를 var\\_pre_d049_backup\\ 으로 복사합니다(원본 보존).
 - 끝나면 var\\MIGRATED_D049 를 남깁니다. 이후 STOCKKING_ACCOUNT 없이 실행하면 명령이 거부됩니다
   (빈 var\\ 를 보고 감사 로그·킬스위치를 놓치는 사고 방지). 모의는 $env:STOCKKING_ACCOUNT = "paper".
+- 기존 운용 금액(operating_capital.json)은 지우지 않고 var\\paper\\archive\\operating_capital_<고정일>.json 으로 보관합니다.
+  paper 첫 connect_check 가 그 시점 주문 가능 금액 전액으로 다시 고정하고, 이전 값과 함께 감사 로그에 남깁니다(사유 D-049 restart).
 - 키 파일은 복사가 아니라 이동합니다(같은 키가 두 곳에 남지 않게). 토큰은 다시 받으면 되므로 지웁니다.
 """
 
@@ -55,6 +57,10 @@ def apply(operator: str, var: Path = SHARED_VAR, keys_dir: Path | None = None) -
     dest.mkdir(parents=True, exist_ok=True)
     for name in p["var_items"]:
         shutil.move(str(var / name), str(dest / name))
+    # 총괄 결정(11/27): 병행 모의 운용 금액은 T0 시작(paper 첫 실행) 때 전액으로 다시 고정 → 기존 값은 보관만
+    from ..risk.stages import archive_capital_file
+    old_cap = archive_capital_file("D-049 restart", dest / "operating_capital.json")
+    p["archived_capital"] = old_cap.get("capital") if old_cap else None
     if p["secrets"]:
         (keys_dir / "paper").mkdir(parents=True, exist_ok=True)
         shutil.move(p["secrets"], str(keys_dir / "paper" / "secrets.env"))
@@ -76,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
     dest_key = "paper\\secrets.env" if p["secrets"] else "-"
     print(f"  키 파일: {p['secrets'] or '없음'} → {dest_key}")
     print(f"  토큰 캐시: {'삭제(다시 발급)' if p['token'] else '없음'}")
+    if a.apply and p.get("archived_capital"):
+        print(f"  운용 금액 {p['archived_capital']:,}원 → var\\paper\\archive 에 보관. 첫 connect_check 에서 전액으로 다시 고정합니다")
     if a.apply:
         print('→ 이제부터 모의는 $env:STOCKKING_ACCOUNT = "paper" 를 먼저 입력하고 실행합니다 (paper_day.ps1 -Account paper)')
     return 0

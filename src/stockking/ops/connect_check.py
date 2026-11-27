@@ -36,10 +36,19 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--symbol", default="005930")
     ap.add_argument("--order", action="store_true", help="1주 지정가 모의 주문 후 즉시 취소까지 실행")
+    ap.add_argument("--refix-capital", action="store_true",
+                    help="운용 금액 auto 를 지금 주문 가능 금액으로 다시 고정(대표 승인 필요, 이전 값은 archive 보관, D-049)")
+    ap.add_argument("--operator", default="", help="실행·승인자 (--refix-capital 필수)")
     ap.add_argument("--hold-seconds", type=int, default=0,
                     help="재시작 복구 실습용: 주문 접수 후 취소 전 N초 대기(이때 Ctrl+C → 취소 안 된 점검 주문이 남음). 모의 전용")
     add_key_args(ap)
     a = ap.parse_args(argv)
+    if a.refix_capital:   # 증권사 접속 전에 확인
+        from ..risk.stages import _auto_requested
+        if not a.operator:
+            raise ValueError("--refix-capital 은 승인자 --operator 가 필요합니다(대표 승인, D-049)")
+        if not _auto_requested():
+            raise ValueError("--refix-capital 은 운용 금액 auto 에서만 씁니다")
     cl = Checklist("모의 계좌 연결 점검")
     kis = make_client(a)
 
@@ -60,10 +69,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         bal = kis.inquire_balance()
         cl.check("3. 잔고 조회", True, f"예수금 {bal['cash']:,}원, 보유 {len(bal['positions'])}종목")
-        from ..risk.stages import _auto_requested, fix_auto_capital, operating_capital
+        from ..risk.stages import _auto_requested, archive_capital_file, operating_capital
+        from .common import fix_capital_logged
         orderable = bal["cash_d2"] or bal["cash"]
+        if a.refix_capital:   # D-049: 대표 승인 뒤 명시적 명령으로만 다시 고정 (기존 파일은 archive 로 보관)
+            archive_capital_file(f"refix (승인: {a.operator})")
         if _auto_requested():
-            print(f"  운용 금액 auto(D-046): {fix_auto_capital(orderable):,}원으로 고정 (var/operating_capital.json)")
+            cap = fix_capital_logged(orderable, operator=a.operator, command="connect_check")
+            print(f"  운용 금액 auto(D-046): {cap:,}원")
         err = capital_error(orderable)
         cl.check("3-1. 운용 금액 ≤ 모의 예수금 (D-044)", err is None, err or f"운용 금액 {operating_capital():,}원")
     except Exception as e:  # noqa: BLE001
