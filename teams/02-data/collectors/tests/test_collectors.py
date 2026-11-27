@@ -494,3 +494,20 @@ def test_rebuild_tech_from_cache_no_kis_calls(tmp_path):
     assert (tmp_path / "tech_candidates_prev.csv").exists()
     import json
     assert json.loads((tmp_path / "manifest.json").read_text())["tech_ranges"]["rebuilt_from_cache"] is True
+
+
+def test_seibro_distribution_isin_and_utf8sig(tmp_path):
+    from stockking_data import etf
+    from stockking_data.index_check import read_krx_index_ohlc
+    a = tmp_path / "a.csv"
+    a.write_text("종목명,isin,운용사,유형,지급기준일,실지급일,배당구분,주당분배금\n"
+                 "KODEX 200,KR7069500007,삼성,주식,2026/04/30,2026/05/06,현금,\"1,000\"\n"
+                 "다른ETF,KR7999990001,X,주식,2026/04/30,2026/05/06,현금,5\n", encoding="utf-8-sig")
+    b = tmp_path / "b.csv"
+    b.write_text("종목명,isin,지급기준일,주당분배금\nKODEX 200,KR7069500007,2025/04/30,900\nKODEX 200,KR7069500007,2026/04/30,1000\n",
+                 encoding="utf-8-sig")
+    d = etf.read_distributions_many([a, b])
+    assert d["069500"] == {"2026-04-30": 1000.0, "2025-04-30": 900.0}
+    tr = tmp_path / "tr.csv"
+    tr.write_text("일자,종가,대비,등락률,시가,고가,저가\n2026/11/27,1018.57,1,0.1,1010,1020,1005\n", encoding="utf-8-sig")
+    assert read_krx_index_ohlc(tr)[0] == {"date": "2026-11-27", "open": 1010.0, "high": 1020.0, "low": 1005.0, "close": 1018.57}

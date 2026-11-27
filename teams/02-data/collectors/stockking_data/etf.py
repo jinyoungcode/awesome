@@ -47,17 +47,31 @@ def read_distributions(path: Path) -> dict[str, dict[str, float]]:
             if any(k in c for k in keys):
                 return i
         raise ValueError(f"분배금 CSV에 {keys} 열이 없습니다: {h}")
-    ci, di, vi = find("종목코드", "단축코드"), find("기준일"), find("주당분배금", "분배금액", "분배금")
+    try:
+        ci, isin = find("종목코드", "단축코드"), False
+    except ValueError:
+        ci, isin = find("isin", "ISIN", "표준코드"), True        # SEIBro 분배금지급현황: isin 열 (KR7069500007 → 069500)
+    di, vi = find("지급기준일", "기준일"), find("주당분배금", "분배금액", "분배금")
     out: dict[str, dict[str, float]] = {}
     for r in rows[1:]:
         if len(r) <= max(ci, di, vi) or not r[di].strip():
             continue
-        code = r[ci].strip().zfill(6)
+        raw = r[ci].strip()
+        code = raw[3:9] if isin and len(raw) == 12 else raw.zfill(6)
         d = r[di].strip().replace("/", "-").replace(".", "-")
         if len(d) == 8 and d.isdigit():
             d = f"{d[:4]}-{d[4:6]}-{d[6:]}"
         out.setdefault(code, {})[d] = out.get(code, {}).get(d, 0.0) + float(r[vi].replace(",", "") or 0)
     return out
+
+
+def read_distributions_many(paths: list[Path]) -> dict[str, dict[str, float]]:
+    """여러 CSV(기간을 나눠 받은 파일 등)를 합친다. 같은 종목·같은 기준일은 한 번만 반영."""
+    merged: dict[str, dict[str, float]] = {}
+    for p in paths:
+        for code, m in read_distributions(p).items():
+            merged.setdefault(code, {}).update(m)
+    return merged
 
 
 def tr_series(bars: list[dict], dists: dict[str, float]) -> list[dict]:

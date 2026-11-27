@@ -69,7 +69,7 @@ def _etf_bars(a, q) -> int:
     out.mkdir(parents=True, exist_ok=True)
     syms = [s.strip().zfill(6) for s in a.symbols.split(",") if s.strip()]
     bars = etf.fetch_etf_bars(q, syms, a.start, a.end)
-    dists = etf.read_distributions(Path(a.dist)) if a.dist else {}
+    dists = etf.read_distributions_many([Path(x.strip()) for x in a.dist.split(",") if x.strip()]) if a.dist else {}
     if not a.dist:
         print("[경고] 분배금 CSV(--dist)가 없어 TR 가격 = 원가격입니다. S03 신호(§4)는 TR 가격 기준이므로 백테스트 전 반드시 보완", file=sys.stderr)
     rows, summary = [], {}
@@ -150,7 +150,7 @@ def main(argv=None) -> int:
     eb.add_argument("--start", type=date.fromisoformat, default=date(2009, 1, 1))
     eb.add_argument("--end", type=date.fromisoformat, default=date.today())
     eb.add_argument("--symbols", default="069500,229200,114260,132030")
-    eb.add_argument("--dist", help="KRX ETF 분배금 CSV (없으면 TR=원가격, 경고)")
+    eb.add_argument("--dist", help="분배금 CSV(SEIBro 분배금지급현황 등, isin 또는 종목코드 열). 여러 개는 쉼표로. 없으면 TR=원가격, 경고")
     eb.add_argument("--kosdaq150-index", help="229200 상장 전 proxy용 KOSDAQ150 지수 CSV(index.csv 형식 또는 KRX CSV). 없으면 KIS에서 받음")
     eb.add_argument("--interval", type=float, default=None)
     tc = sub.add_parser("tech-candidates", help="D-027 점검 주문 후보만 다시 만들기 (입력 폴더 _cache 사용, KIS 호출 없음)")
