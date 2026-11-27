@@ -187,4 +187,9 @@ $env:STOCKKING_ACCOUNT = "paper"
 - 내용 원칙: 사건 종류·계좌 구분·시각·조치 안내만 넣습니다. 계좌번호·금액·키는 넣지 않습니다. 예: `[실전] 09:41 일중 손실 한도 도달 — 신규 매수 정지. startup_check 로 확인`
 - **중복 방지**: 사건마다 키 `(계좌, 종류, 날짜, 대상)`를 만들고, 보낸 키는 `var\<프로필>\notify_sent.jsonl` 에 남겨 같은 키는 다시 보내지 않습니다. KILL_ALL 은 두 계좌 공용이라 `var\notify_sent_shared.jsonl` 하나만 씁니다. 그래서 두 프로세스가 동시에 봐도 1번만 갑니다(파일 잠금 후 기록, 기록에 성공한 쪽만 전송). 해제 알림은 발동 알림과 다른 키입니다.
 - **키 위치(수정)**: 모의 프로세스는 실전 키 파일을 읽을 수 없게 분리돼 있습니다(D-049). 그래서 텔레그램 키는 두 계좌 공용 파일 `%APPDATA%\stockking\notify.env` 에 둡니다. 이 파일에는 `TELEGRAM_BOT_TOKEN`·`TELEGRAM_CHAT_ID` 만 허용하고, `KIS_*` 가 들어 있으면 실행을 거부합니다. 권한·OneDrive·저장소 밖 검사는 다른 키 파일과 같습니다. → `TELEGRAM_ALERT_SETUP.md` 5단계를 이 경로로 바꿨습니다.
-- 테스트(2단계): 전송 실패해도 킬스위치·관문 결과 동일, 같은 사건 2번 → 전송 1번, KILL_ALL 두 프로필 동시 → 1번, paper 는 손실 한도 사건을 보내지 않음, 메시지에 숫자 금액·계좌번호 패턴이 없음.
+- **notify.env 안전 조건(총괄 승인 2026-11-27)** — `stockking.notify.load_notify_file()` 이 읽을 때마다 검사합니다.
+  1. 허용 키는 `TELEGRAM_BOT_TOKEN`·`TELEGRAM_CHAT_ID` 두 개뿐입니다. 그 외 키가 하나라도 있으면 거부하고 알림을 끕니다. 오류 메시지에는 키 이름만 넣고 값은 넣지 않습니다.
+  2. 권한 검사: 윈도우는 `icacls` 결과를 읽어, 현재 사용자 외의 계정(Everyone·Users·Authenticated Users 등)이 있으면 **경고**합니다. 경고는 콘솔과 감사 로그 `notify_file_insecure` 에 남기고, icacls 잠금 명령을 안내합니다. POSIX 는 그룹·기타 권한이 있으면 경고합니다. 경고만 하고 알림은 계속 보냅니다.
+  3. 파일이 저장소 폴더 안에 있거나 OneDrive 동기화 폴더 안에 있으면 거부합니다(기존 키 파일 규칙과 같음). 저장소 `.gitignore` 에도 `notify.env` 를 추가합니다.
+  4. 토큰 비노출: 토큰은 `Secret` 으로 감싸 `repr`·`str` 이 `****` 입니다. 전송 주소(`/bot<토큰>/sendMessage`)는 예외·로그에 남기기 전에 토큰 부분을 `****` 로 바꿉니다. `urllib` 오류 메시지에 들어간 주소도 같은 방식으로 지웁니다. 응답 원문 진단 로그(STOCKKING_KIS_DEBUG)와 같은 마스킹 함수를 씁니다.
+- 테스트(2단계): 전송 실패해도 킬스위치·관문 결과 동일, 같은 사건 2번 → 전송 1번, KILL_ALL 두 프로필 동시 → 1번, paper 는 손실 한도 사건을 보내지 않음, 메시지에 숫자 금액·계좌번호 패턴이 없음. notify.env 추가: 허용 외 키(예: `KIS_PAPER_APP_KEY`, `FOO`) 거부, 저장소 안·OneDrive 안 파일 거부, 넓은 권한 경고(윈도우는 icacls 출력 예시로, POSIX 는 chmod 644 로), **토큰 마스킹**(전송 실패·HTTPError·URLError·예외 traceback·감사 로그·콘솔 출력 어디에도 토큰 문자열이 없음을 가짜 토큰으로 검사).
