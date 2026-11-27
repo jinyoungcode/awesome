@@ -438,3 +438,50 @@ def test_index_from_krx(tmp_path):
     r = index_csv_from_krx(a, b, tmp_path / "index.csv")
     rows = list(csv.DictReader((tmp_path / "index.csv").open()))
     assert r["KOSPI200"] == 2 and rows[0]["date"] == "2026-11-25" and rows[1]["close"] == "500.1"
+
+
+def test_regime_status_and_outlook():
+    from stockking_data import regime
+    base = date(2025, 1, 1)
+    closes = [1000.0] * 150 + [700.0] * 120 + [650.0] * 9 + [700.0]     # 마지막 700, 최근 200일 중 9일은 650
+    series = [((base + timedelta(days=i)).isoformat(), c) for i, c in enumerate(closes)]
+    st = regime.regime_status(closes)
+    assert st["on"] is False and st["sma200"] == (70 * 1000 + 121 * 700 + 9 * 650) / 200
+    o = regime.outlook(series)
+    flat = o["scenarios"][0]
+    # 횡보 k일 후 평균 = ((70-k)*1000 + (121+k)*700 + 9*650)/200 < 700  ⇔  k > 68.5 → 69일째 ON
+    assert flat["trading_days"] == 69 and flat["index_at_cross"] == 700.0
+    up = o["scenarios"][3]
+    assert up["trading_days"] < flat["trading_days"]
+    pure_flat = regime.outlook([((base + timedelta(days=i)).isoformat(), c) for i, c in enumerate([1000.0] * 150 + [700.0] * 130)])
+    assert pure_flat["scenarios"][0]["trading_days"] is None and pure_flat["scenarios"][0]["within_1pct_trading_days"] is not None
+    st_on = regime.regime_status([100.0] * 199 + [90.0, 120.0])
+    assert st_on["on"] and st_on["changed"]
+
+
+def test_etf_tr_series_ex_date_before_record_date():
+    from stockking_data import etf
+    bars = [{"date": d, "symbol": "069500", "close": c} for d, c in
+            [("2026-04-27", 100.0), ("2026-04-28", 100.0), ("2026-04-29", 99.0), ("2026-04-30", 99.0)]]
+    tr = etf.tr_series(bars, {"2026-04-30": 1.0})   # 지급기준일 4/30 → 분배락일 4/29
+    assert [r["tr_factor"] for r in tr] == [1.0, 1.0, 1.01, 1.01]
+    assert tr[2]["tr_close"] == round(99.0 * 1.01, 4)
+
+
+def test_etf_distributions_csv_and_proxy(tmp_path):
+    from stockking_data import etf
+    f = tmp_path / "d.csv"
+    f.write_bytes("종목코드,종목명,지급기준일,주당분배금\n069500,KODEX 200,2026/04/30,\"1,000\"\n114260,국고채,20260131,50\n".encode("cp949"))
+    d = etf.read_distributions(f)
+    assert d["069500"]["2026-04-30"] == 1000.0 and d["114260"]["2026-01-31"] == 50.0
+    idx = [{"date": "2015-10-05", "close": 1000.0}, {"date": "2015-10-06", "close": 1010.0}, {"date": "2015-10-07", "close": 1020.0}]
+    first = {"date": "2015-10-07", "symbol": "229200", "close": 10000.0, "tr_close": 10000.0}
+    p = etf.proxy_from_index(idx, first)
+    assert [r["date"] for r in p] == ["2015-10-05", "2015-10-06"] and all(r["proxy"] for r in p)
+    assert abs(p[1]["close"] - 10000 / (1020 / 1010) / (1 - etf.PROXY_FEE) ** (1 / 252)) < 1e-3
+
+
+def test_s02_manifest_has_regime(tmp_path):
+    m = s02_inputs.build(KisQuotes(FakeClient(), log=lambda *_: None), T, ["005930"], [], tmp_path,
+                         log=lambda *_: None, status_now=True)
+    assert set(m["regime"]) == {"KOSPI200", "KOSDAQ150"} and "on" in m["regime"]["KOSPI200"]

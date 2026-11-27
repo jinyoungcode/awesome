@@ -70,6 +70,20 @@ Get-Content "$OUT\manifest.json" -Encoding UTF8 | Select-String "universe_passed
 
 ---
 
+## ★ D-048 국면 복귀 예상·전환 알림
+
+**복귀 예상 (10초, 매일 s02-inputs 뒤 아무 때나)**
+```powershell
+& $PY $COL regime-outlook --index-csv "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27\index.csv"
+```
+- 시나리오: 횡보(지금 수준 유지) / 월 +3% / 월 +5% / 월 +10% 반등 → 각각 '지수 > 200일 평균'이 처음 성립하는 거래일 수와 날짜(주말만 제외한 근사)
+- 횡보는 평균이 지수와 같아지기만 하고 넘지 못할 수 있어 "평균과 1% 이내 접근일"도 함께 표시
+- 결과 `regime_outlook.json`(같은 폴더)
+
+**전환 알림 (자동):** `s02-inputs`가 끝날 때 로그에 `[REGIME_ON]`/`[REGIME_OFF]` 줄과 종가·200일 평균·격차를 찍고, 전날과 바뀌면 `★전환`을 붙입니다. `manifest.json`에 `regime`(지수별 close·sma200·on·prev_on·changed·gap_pct)과 `warnings`(`REGIME_ON KOSPI200 (전환)` 등)가 들어갑니다.
+
+---
+
 ## ★ D-047 지수값 점검 (11/27 18:35 실행 직후, 약 2분)
 
 S02 0건 원인이 국면 필터(지수 > 200일 평균) OFF이고, KIS 모의 지수 흐름(KOSPI200 2025-10 약 493 → 2026-06 약 1,477 → 11/26 727, 하루 8% 넘는 급변 12회)이 비정상으로 보여 대조합니다.

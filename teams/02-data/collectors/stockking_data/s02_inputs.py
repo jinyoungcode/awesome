@@ -149,6 +149,12 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     if calendar[-1] != T.isoformat():
         raise RuntimeError(f"{T}는 거래일이 아니거나 지수 데이터가 아직 없습니다 (마지막 {calendar[-1]})")
     index_rows = [{**r, "symbol": "KOSPI200"} for r in k2] + [{**r, "symbol": "KOSDAQ150"} for r in kq]
+    from .regime import regime_status
+    regime = {nm: regime_status([r["close"] for r in rows]) for nm, rows in (("KOSPI200", k2), ("KOSDAQ150", kq))}
+    for nm, st in regime.items():
+        tag = "REGIME_ON" if st["on"] else "REGIME_OFF"
+        chg = " ★전환" if st["changed"] else ""
+        log(f"[{tag}]{chg} {nm} 종가 {st['close']:,} vs 200일 평균 {st['sma200']:,} ({st['gap_pct']:+.2f}%)")
 
     markets = {s: "KOSPI" for s in kospi200} | {s: "KOSDAQ" for s in kosdaq150}
     symbols = sorted(set(markets) | set(extra_symbols or []))
@@ -207,6 +213,9 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
         "constituents": {"KOSPI200": len(kospi200), "KOSDAQ150": len(kosdaq150)},
         "universe_passed": len(universe), "bars_rows": len(all_bars),
         "excluded_by_rule": exclusion_counts(verdicts),
+        "regime": regime,
+        "warnings": [f"REGIME_ON {nm}" + (" (전환)" if st["changed"] else "") for nm, st in regime.items() if st["on"]]
+                    + [f"REGIME_OFF 전환 {nm}" for nm, st in regime.items() if st["changed"] and not st["on"]],
         "index_rows": {"KOSPI200": len(k2), "KOSDAQ150": len(kq), "kosdaq150_code": kq_code},
         "bad_ohlc_excluded": bad_ohlc[:50], "bad_ohlc_count": len(bad_ohlc),
         "status_checked": check_status, "api_calls": q.calls, "api_retries": getattr(q, "retries", 0),

@@ -61,6 +61,43 @@ def _symbols(a, root: Path) -> list[str]:
     return syms
 
 
+def _etf_bars(a, q) -> int:
+    from stockking_data import etf
+    from stockking_data.store import write_csv
+    out = Path(a.out).expanduser()
+    _refuse_inside_git(out)
+    out.mkdir(parents=True, exist_ok=True)
+    syms = [s.strip().zfill(6) for s in a.symbols.split(",") if s.strip()]
+    bars = etf.fetch_etf_bars(q, syms, a.start, a.end)
+    dists = etf.read_distributions(Path(a.dist)) if a.dist else {}
+    if not a.dist:
+        print("[경고] 분배금 CSV(--dist)가 없어 TR 가격 = 원가격입니다. S03 신호(§4)는 TR 가격 기준이므로 백테스트 전 반드시 보완", file=sys.stderr)
+    rows, summary = [], {}
+    for s in syms:
+        b = [x for x in bars if x["symbol"] == s]
+        tr = etf.tr_series(b, dists.get(s, {}))
+        proxy = []
+        if s == "229200" and a.kosdaq150_index and tr:
+            from stockking_data.index_check import read_index_csv, read_krx_index_ohlc
+            p = Path(a.kosdaq150_index)
+            try:
+                idx = [{"date": d, "close": c} for d, c in read_index_csv(p).get("KOSDAQ150", [])]
+            except KeyError:
+                idx = read_krx_index_ohlc(p)
+            proxy = etf.proxy_from_index(idx, tr[0])
+        rows += [{**x, "proxy": x.get("proxy", False)} for x in proxy + tr]
+        summary[s] = {"name": etf.S03_ETFS.get(s, ""), "rows": len(tr), "proxy_rows": len(proxy),
+                      "first": tr[0]["date"] if tr else None, "last": tr[-1]["date"] if tr else None,
+                      "distributions": len(dists.get(s, {})), "tr_factor_last": tr[-1]["tr_factor"] if tr else None}
+    write_csv(out / "etf_bars.csv", ["date", "symbol", "open", "high", "low", "close", "volume", "value",
+                                     "tr_factor", "tr_close", "proxy"], sorted(rows, key=lambda r: (r["symbol"], r["date"])))
+    (out / "etf_manifest.json").write_text(json.dumps({"start": a.start.isoformat(), "end": a.end.isoformat(),
+                                                       "dist_file": a.dist, "symbols": summary, "api_calls": q.calls},
+                                                      ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="자료팀 KIS 시세 수집 (조회 전용)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -100,7 +137,32 @@ def main(argv=None) -> int:
     ik.add_argument("--krx-kospi200", required=True)
     ik.add_argument("--krx-kosdaq150", required=True)
     ik.add_argument("--out", required=True, help="만들 index.csv 경로 (기존 파일은 index_kis.csv로 보관)")
+    ro = sub.add_parser("regime-outlook", help="D-048: 국면 필터(지수 > 200일 평균) 복귀 예상 시점")
+    ro.add_argument("--index-csv", required=True)
+    eb = sub.add_parser("etf-bars", help="D-048 ③ S03 ETF 일봉(원가격) + 분배금 → TR 가격")
+    eb.add_argument("--out", required=True, help="출력 폴더")
+    eb.add_argument("--start", type=date.fromisoformat, default=date(2009, 1, 1))
+    eb.add_argument("--end", type=date.fromisoformat, default=date.today())
+    eb.add_argument("--symbols", default="069500,229200,114260,132030")
+    eb.add_argument("--dist", help="KRX ETF 분배금 CSV (없으면 TR=원가격, 경고)")
+    eb.add_argument("--kosdaq150-index", help="229200 상장 전 proxy용 KOSDAQ150 지수 CSV(index.csv 형식 또는 KRX CSV)")
+    eb.add_argument("--interval", type=float, default=None)
     a = ap.parse_args(argv)
+
+    if a.cmd == "regime-outlook":
+        from stockking_data.index_check import read_index_csv
+        from stockking_data.regime import outlook
+        idx = Path(a.index_csv).expanduser()
+        rep = {nm: outlook(series) for nm, series in read_index_csv(idx).items()}
+        (idx.parent / "regime_outlook.json").write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        for nm, r in rep.items():
+            print(f"{nm} ({r['as_of']}): 종가 {r['close']:,} / 200일 평균 {r['sma200']:,} ({r['gap_pct']:+.2f}%) → {'ON' if r['on'] else 'OFF'}")
+            for sc in r["scenarios"]:
+                when = (f"{sc['trading_days']}거래일 후 ≈ {sc['approx_date']}" if sc["trading_days"] is not None
+                        else f"750거래일 안에 '초과'는 안 됨 (평균과 1% 이내 접근: {sc['within_1pct_approx_date'] or '없음'})")
+                print(f"   - {sc['scenario']}: {when}" + (f" (지수 {sc['index_at_cross']:,} > 평균 {sc['sma200_at_cross']:,})" if sc["index_at_cross"] else ""))
+        print("※ 날짜는 주말만 제외한 근사(공휴일만큼 늦어질 수 있음). 상세:", idx.parent / "regime_outlook.json")
+        return 0
 
     if a.cmd == "index-from-krx":
         from stockking_data.index_check import index_csv_from_krx
@@ -139,6 +201,10 @@ def main(argv=None) -> int:
         return 0
 
     q = _client(getattr(a, "live_quotes", False))
+    if a.cmd == "etf-bars":
+        if a.interval is not None:
+            q._c.min_interval_sec = max(0.05, a.interval)
+        return _etf_bars(a, q)
     if a.interval is not None:
         q._c.min_interval_sec = max(0.05, a.interval)
     if a.cmd == "check":
