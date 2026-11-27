@@ -362,4 +362,30 @@ def test_s02_inputs_resume_skips_cached_symbols(tmp_path):
     first = q.calls
     q2 = KisQuotes(FakeClient(), log=lambda *_: None)
     m = s02_inputs.build(q2, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
-    assert first == 23 and q2.calls == 8 and m["universe_passed"] == 3   # 2차 실행은 지수(2개×4구간)만 조회
+    assert q2.calls == first - 3 * 5 and m["universe_passed"] == 3   # 2차 실행은 지수만 조회 (종목 3개 × 일봉 4구간+상태 1 생략)
+
+
+class Last50IndexClient(FakeClient):
+    """실측 재현(11/27): KIS 지수 일봉은 요청 구간이 길어도 최근 약 50행만 돌려준다."""
+
+    def _call(self, method, path, headers, p):
+        res = super()._call(method, path, headers, p)
+        if headers["tr_id"] == "FHKUP03500100" and res.get("output2"):
+            res = {**res, "output2": res["output2"][:50]}   # 최신순 앞 50행
+        return res
+
+
+def test_index_bars_pages_back_when_only_50_rows_returned():
+    q = KisQuotes(Last50IndexClient(), log=lambda *_: None)
+    start = T - timedelta(days=s02_inputs.INDEX_LOOKBACK_DAYS)
+    _, rows = q.index_bars("2001", start, T)
+    expect = trading_days(T, start)
+    assert [r["date"] for r in rows] == [d.isoformat() for d in expect]   # 빈 구간 없음
+    assert len(rows) >= 280
+
+
+def test_s02_inputs_refuses_short_index(tmp_path, monkeypatch):
+    monkeypatch.setattr(s02_inputs, "INDEX_LOOKBACK_DAYS", 200)
+    with pytest.raises(RuntimeError, match="200행"):
+        s02_inputs.build(KisQuotes(FakeClient(), log=lambda *_: None), T, ["005930"], [], tmp_path,
+                         log=lambda *_: None, status_now=True)

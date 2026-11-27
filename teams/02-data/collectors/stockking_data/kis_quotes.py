@@ -30,7 +30,9 @@ P_INDEX_DAILY = "/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartpric
 RATE_LIMIT_CODES = {"EGW00201"}   # 초당 거래건수 초과 (모의 서버는 HTTP 500 본문으로 오기도 함)
 MAX_RETRY = 5
 BACKOFF_SEC = (1, 2, 4, 8)          # 재시도 대기: 1·2·4·8초 (총 5회 시도)
-WINDOW_DAYS = 140                    # 기간 조회 1회 구간 ≈ 100영업일 이하 (모의 서버 장기 구간 500 회피)
+WINDOW_DAYS = 140                    # 종목 일봉 1회 구간 ≈ 100영업일 이하 (모의 서버 장기 구간 500 회피)
+INDEX_WINDOW_DAYS = 70               # 지수 일봉 구간 (KIS 지수 일봉은 1회 약 50행만 반환)
+MAX_PAGES_PER_WINDOW = 10
 
 
 def _retryable_exc(e: Exception) -> bool:
@@ -96,12 +98,36 @@ class KisQuotes:
                 time.sleep(wait)
         raise KisQuoteError(f"{tr_id} {MAX_RETRY}회 실패: {last}")
 
+    def _paged(self, path: str, tr_id: str, base: dict, ws: date, we: date) -> tuple[dict, list[dict]]:
+        """한 구간 [ws, we]를 끝까지 받는다. 응답이 구간 일부(최근 N행)만 오면
+        가장 오래된 날짜의 전날로 끝 날짜를 당겨 다시 조회한다. (첫 응답, 모든 행)"""
+        rows_all: list[dict] = []
+        first: dict = {}
+        cur = we
+        for _ in range(MAX_PAGES_PER_WINDOW):
+            res = self._get(path, tr_id, {**base, "FID_INPUT_DATE_1": _ymd(ws), "FID_INPUT_DATE_2": _ymd(cur)})
+            first = first or res
+            rows = [r for r in res.get("output2") or [] if r.get("stck_bsop_date")]
+            rows = [r for r in rows if _ymd(ws) <= r["stck_bsop_date"] <= _ymd(cur)]
+            if not rows:
+                break
+            rows_all += rows
+            oldest = min(r["stck_bsop_date"] for r in rows)
+            od = date(int(oldest[:4]), int(oldest[4:6]), int(oldest[6:]))
+            if od <= ws:
+                break
+            nxt = od - timedelta(days=1)
+            if nxt >= cur:  # 진전 없음 (방어)
+                break
+            cur = nxt
+        return first, rows_all
+
     @staticmethod
-    def _windows(start: date, end: date) -> list[tuple[date, date]]:
-        """[start, end]를 최신 구간부터 WINDOW_DAYS 이하로 나눈다."""
+    def _windows(start: date, end: date, size: int = WINDOW_DAYS) -> list[tuple[date, date]]:
+        """[start, end]를 최신 구간부터 size일 이하로 나눈다."""
         out, cur = [], end
         while cur >= start:
-            ws = max(start, cur - timedelta(days=WINDOW_DAYS - 1))
+            ws = max(start, cur - timedelta(days=size - 1))
             out.append((ws, cur))
             cur = ws - timedelta(days=1)
         return out
@@ -111,12 +137,10 @@ class KisQuotes:
         """[start, end] 일봉. 약 100영업일 이하 구간으로 나눠 조회 후 합침. 오래된 날짜 → 최신 순."""
         out: dict[str, dict] = {}
         for ws, we in self._windows(start, end):
-            res = self._get(P_DAILY_CHART, TR_DAILY_CHART, {
+            _, rows = self._paged(P_DAILY_CHART, TR_DAILY_CHART, {
                 "FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol,
-                "FID_INPUT_DATE_1": _ymd(ws), "FID_INPUT_DATE_2": _ymd(we),
                 "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0" if adjusted else "1",
-            })
-            rows = [r for r in res.get("output2") or [] if r.get("stck_bsop_date")]
+            }, ws, we)
             for r in rows:
                 d = r["stck_bsop_date"]
                 out[d] = {
@@ -134,17 +158,13 @@ class KisQuotes:
         """(지수명, 일봉 목록). 약 100영업일 이하 구간으로 나눠 조회. 지수명으로 코드 검증은 호출 측에서."""
         out: dict[str, dict] = {}
         name = ""
-        for ws, we in self._windows(start, end):
-            res = self._get(P_INDEX_DAILY, TR_INDEX_DAILY, {
-                "FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": index_code,
-                "FID_INPUT_DATE_1": _ymd(ws), "FID_INPUT_DATE_2": _ymd(we),
-                "FID_PERIOD_DIV_CODE": "D",
-            })
+        for ws, we in self._windows(start, end, INDEX_WINDOW_DAYS):
+            res, rows = self._paged(P_INDEX_DAILY, TR_INDEX_DAILY, {
+                "FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": index_code, "FID_PERIOD_DIV_CODE": "D",
+            }, ws, we)
             name = name or (res.get("output1") or {}).get("hts_kor_isnm", "")
-            for r in res.get("output2") or []:
-                d = r.get("stck_bsop_date")
-                if not d:
-                    continue
+            for r in rows:
+                d = r["stck_bsop_date"]
                 out[d] = {
                     "date": f"{d[:4]}-{d[4:6]}-{d[6:]}",
                     "open": float(r.get("bstp_nmix_oprc") or 0), "high": float(r.get("bstp_nmix_hgpr") or 0),
