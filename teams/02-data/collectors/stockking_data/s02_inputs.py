@@ -201,7 +201,7 @@ def build(q, T: date, kospi200: list[str], kosdaq150: list[str], out: Path,
     write_csv(out / "index.csv", ["date", "symbol", "open", "high", "low", "close"], index_rows)
     write_csv(out / "universe_report.csv", ["symbol", "market", "passed", "price", "adv20", "bars", "missing_250", "reasons"],
               [{**v.__dict__, "reasons": "; ".join(v.reasons)} for v in verdicts])
-    write_csv(out / "tech_candidates.csv", ["role", "rank", "symbol", "market", "price", "adv20"], tech)
+    write_csv(out / "tech_candidates.csv", ["role", "rank", "symbol", "market", "price", "adv20", "in_band"], tech)
     manifest = {
         "T": T.isoformat(), "source": "KIS Open API (모의투자 도메인 시세)", "adj": "KIS 수정주가(FID_ORG_ADJ_PRC=0)",
         "constituents": {"KOSPI200": len(kospi200), "KOSDAQ150": len(kosdaq150)},
@@ -232,8 +232,16 @@ def pick_tech_candidates(verdicts: list[Verdict], ranges: dict[str, tuple[int, i
               if lo <= v.price <= hi and v.price > 0
               and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)]
         ok.sort(key=lambda v: -v.adv20)
-        out += [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20}
-                for i, v in enumerate(ok[:TECH_TOP_N], 1)]
+        rows = [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20,
+                 "in_band": True} for i, v in enumerate(ok[:TECH_TOP_N], 1)]
+        if not rows:
+            # 가격대 안 종목이 없으면(운용 금액이 커서 목표가 큰 경우 등) 상한 이하에서 가장 가까운 가격 순으로 대체 후보
+            alt = [v for v in verdicts if 0 < v.price <= hi and not any(r.startswith(("U6", "U7", "T일")) for r in v.reasons)
+                   and v.adv20 >= MIN_ADV20]
+            alt.sort(key=lambda v: (hi - v.price, -v.adv20))
+            rows = [{"role": role, "rank": i, "symbol": v.symbol, "market": v.market, "price": v.price, "adv20": v.adv20,
+                     "in_band": False} for i, v in enumerate(alt[:TECH_TOP_N], 1)]
+        out += rows
     return out
 
 

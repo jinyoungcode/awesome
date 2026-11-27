@@ -393,3 +393,37 @@ def test_s02_inputs_refuses_short_index(tmp_path, monkeypatch):
     m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert m["status"] == "FAILED" and "200" in m["warning"]
     assert not (tmp_path / "bars.csv").exists() and not (tmp_path / "index.csv").exists()
+
+
+def test_tech_candidates_fallback_when_band_empty():
+    V = s02_inputs.Verdict
+    vs = [V("100000", "KOSPI", price=1_500_000, adv20=9_000_000_000), V("200000", "KOSPI", price=900_000, adv20=50_000_000_000),
+          V("300000", "KOSPI", price=3_000_000, adv20=50_000_000_000)]
+    rows = s02_inputs.pick_tech_candidates(vs, s02_inputs.tech_ranges(10_000_000))   # T1 1.8~2.2백만 원: 해당 없음
+    t1 = [r for r in rows if r["role"] == "T1"]
+    assert [r["symbol"] for r in t1] == ["100000", "200000"] and not any(r["in_band"] for r in t1)
+
+
+def test_verify_index_flags_jumps_and_compares(tmp_path):
+    from stockking_data import index_check
+    idx = tmp_path / "index.csv"
+    rows = ["date,symbol,open,high,low,close"]
+    closes = [500, 505, 560, 562, 563, 520, 521]          # +10.9%, -7.6%
+    days = ["2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-23", "2026-11-24", "2026-11-25"]
+    rows += [f"{d},KOSPI200,{c},{c},{c},{c}" for d, c in zip(days, closes)]
+    idx.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    krx = tmp_path / "krx.csv"
+    krx.write_bytes(("일자,종가,대비\n" + "\n".join(f"{d.replace('-', '/')},\"{c:,}\",0" for d, c in zip(days, closes))).encode("cp949"))
+    rep = index_check.check(idx, None, None, {"KOSPI200": krx})
+    k = rep["KOSPI200"]
+    assert [j["date"] for j in k["jumps"]] == ["2026-11-19"] and k["krx_max_abs_diff_pct"] == 0.0
+
+
+def test_verify_index_kis_single_day_refetch(tmp_path):
+    from stockking_data import index_check
+    q = KisQuotes(FakeClient(), log=lambda *_: None)
+    _, k2 = q.index_bars("2001", T - timedelta(days=30), T)
+    idx = tmp_path / "index.csv"
+    idx.write_text("date,symbol,open,high,low,close\n" + "".join(f"{r['date']},KOSPI200,1,1,1,{r['close']}\n" for r in k2))
+    rep = index_check.check(idx, q, "2203")
+    assert rep["KOSPI200"]["kis_refetch"] and all(r["match"] for r in rep["KOSPI200"]["kis_refetch"])

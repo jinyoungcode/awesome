@@ -89,7 +89,37 @@ def main(argv=None) -> int:
     for p in sub.choices.values():
         p.add_argument("--interval", type=float, default=None,
                        help="호출 간격(초). 모의 기본 1.0. 0.5까지 낮춰도 한도 초과 시 자동 재시도")
+    vi = sub.add_parser("verify-index", help="D-047: index.csv 지수값 점검(급변일·KIS 하루 재조회·KRX 대조)")
+    vi.add_argument("--index-csv", required=True)
+    vi.add_argument("--krx-kospi200", help="KRX 개별지수 시세 추이 CSV (코스피 200)")
+    vi.add_argument("--krx-kosdaq150", help="KRX 개별지수 시세 추이 CSV (코스닥 150)")
+    vi.add_argument("--kosdaq150-code", help="manifest.json index_rows.kosdaq150_code 값")
+    vi.add_argument("--no-refetch", action="store_true", help="KIS 재조회 없이 파일만 점검")
+    vi.add_argument("--interval", type=float, default=None)
     a = ap.parse_args(argv)
+
+    if a.cmd == "verify-index":
+        from stockking_data.index_check import check
+        idx = Path(a.index_csv).expanduser()
+        kq_code = a.kosdaq150_code
+        mf = idx.parent / "manifest.json"
+        if not kq_code and mf.exists():
+            kq_code = (json.loads(mf.read_text(encoding="utf-8")).get("index_rows") or {}).get("kosdaq150_code")
+        q = None if a.no_refetch else _client()
+        if q is not None and a.interval is not None:
+            q._c.min_interval_sec = max(0.05, a.interval)
+        rep = check(idx, q, kq_code, {"KOSPI200": a.krx_kospi200 and Path(a.krx_kospi200),
+                                      "KOSDAQ150": a.krx_kosdaq150 and Path(a.krx_kosdaq150)})
+        out = idx.parent / "index_check.json"
+        out.write_text(json.dumps(rep, ensure_ascii=False, indent=2), encoding="utf-8")
+        for name in ("KOSPI200", "KOSDAQ150"):
+            sec = rep.get(name) or {}
+            print(f"{name}: {sec.get('rows')}행, 처음 {sec.get('first')}, 마지막 {sec.get('last')}, 200일 평균 {sec.get('sma200')}, "
+                  f"8% 초과 급변 {len(sec.get('jumps', []))}일, "
+                  f"KIS 하루 재조회 불일치 {sum(1 for r in sec.get('kis_refetch', []) if not r['match'])}건, "
+                  f"KRX 최대 오차 {sec.get('krx_max_abs_diff_pct')}%")
+        print(f"상세: {out}")
+        return 0
 
     q = _client(getattr(a, "live_quotes", False))
     if a.interval is not None:

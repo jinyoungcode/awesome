@@ -70,6 +70,32 @@ Get-Content "$OUT\manifest.json" -Encoding UTF8 | Select-String "universe_passed
 
 ---
 
+## ★ D-047 지수값 점검 (11/27 18:35 실행 직후, 약 2분)
+
+S02 0건 원인이 국면 필터(지수 > 200일 평균) OFF이고, KIS 모의 지수 흐름(KOSPI200 2025-10 약 493 → 2026-06 약 1,477 → 11/26 727, 하루 8% 넘는 급변 12회)이 비정상으로 보여 대조합니다.
+
+**1) KIS 재조회 대조 (KRX 파일 없이 바로 가능)**
+```powershell
+& $PY $COL verify-index --index-csv "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27\index.csv" --interval 0.5
+```
+- 8% 초과 급변일과 표본 5일을 **하루짜리 구간으로 다시 조회**해 index.csv 값과 비교합니다.
+  - 불일치가 있으면 → 자료팀 구간 합치기(페이지 넘김) 문제입니다.
+  - 모두 일치하는데 급변이 있으면 → KIS 모의 원천값 자체 문제입니다.
+- 결과 `index_check.json`(같은 폴더). 화면 요약 두 줄을 그대로 전달해 주세요.
+
+**2) KRX 공표값 대조 (대표가 CSV 2개 받기, 약 3분)**
+- `data.krx.co.kr` → 기본 통계 → 지수 → 주가지수 → **개별지수 시세 추이** (화면번호 [11003])
+- 지수: `코스피 200` / 조회기간: `20251001` ~ `20261127` → 조회 → 다운로드 **CSV** → `%USERPROFILE%\stockking-data\krx_kospi200.csv`
+- 같은 방법으로 `코스닥 150` → `%USERPROFILE%\stockking-data\krx_kosdaq150.csv`
+```powershell
+& $PY $COL verify-index --index-csv "$env:USERPROFILE\stockking-data\s02_inputs\2026-11-27\index.csv" --krx-kospi200 "$env:USERPROFILE\stockking-data\krx_kospi200.csv" --krx-kosdaq150 "$env:USERPROFILE\stockking-data\krx_kosdaq150.csv" --no-refetch
+```
+- `KRX 최대 오차`가 0.1% 이내면 KIS 값이 공표값과 같은 것 → 국면 OFF는 실제 시장 상황입니다. 크게 다르면 KIS 모의 지수를 쓰지 않고 **KRX 지수로 index.csv를 대체**하는 방안을 총괄에 올립니다.
+
+**3) D-027 점검 주문 후보:** 18:35 `s02-inputs` 실행 결과 `tech_candidates.csv`에 자동으로 생성됩니다(국면 필터와 무관). 운용 금액이 커서(예: 1,000만 원 → T1 목표 1주 180만~220만 원) 가격대 안 종목이 없으면, 상한 이하에서 가장 가까운 가격의 종목을 `in_band=False`로 대체 후보로 냅니다. 이 경우 매매팀·총괄이 대체 후보를 쓸지, 운용 금액을 낮출지 정해야 합니다.
+
+---
+
 ## 1. 일정과 마감 (D-042·D-043 반영: 모의 5거래일 11/26·11/27·11/30·12/1·12/2)
 
 | 날짜 | 할 일 | 마감 | 비고 |
