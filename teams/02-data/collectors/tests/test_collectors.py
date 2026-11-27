@@ -237,3 +237,159 @@ def test_tech_ranges_scale_with_capital():
     V = s02_inputs.Verdict
     rows = s02_inputs.pick_tech_candidates([V("100000", "KOSPI", price=200_000, adv20=9)], s02_inputs.tech_ranges(1_000_000))
     assert [r["symbol"] for r in rows if r["role"] == "T1"] == ["100000"]
+
+
+def test_s02_inputs_status_now_and_kospi_only(tmp_path):
+    """자정 이후 직전 거래일 파일: status_now=True면 상태 조회, KOSDAQ150 구성종목 없이도 생성."""
+    m = s02_inputs.build(KisQuotes(FakeClient()), T, ["005930"], [], tmp_path, log=lambda *_: None, status_now=True)
+    assert m["status_checked"] is True and m["universe_passed"] == 1
+    assert {r["symbol"] for r in csv.DictReader((tmp_path / "index.csv").open())} == {"KOSPI200", "KOSDAQ150"}
+    m2 = s02_inputs.build(KisQuotes(FakeClient()), T, ["005930"], [], tmp_path / "b", log=lambda *_: None, status_now=False)
+    assert m2["universe_passed"] == 0
+
+
+def test_resolve_capital_number_auto_and_default(tmp_path, monkeypatch):
+    """D-046: STOCKKING_OPERATING_CAPITAL=auto 여도 오류 없이 고정 파일 값을 읽는다."""
+    import json
+    from stockking_data.capital import resolve_capital
+    for k in ("STOCKKING_AUTO_CAPITAL_FILE", "STOCKKING_DATA_DIR", "STOCKKING_OPERATING_CAPITAL"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.chdir(tmp_path)
+    warns = []
+    assert resolve_capital("10,000,000")[0] == 10_000_000
+    assert resolve_capital("auto", warn=warns.append) == (150_000, "default") and warns
+    assert resolve_capital("", warn=warns.append)[0] == 150_000
+    (tmp_path / "var").mkdir()
+    (tmp_path / "var" / "operating_capital.json").write_text(json.dumps({"capital": 9_876_543}))
+    assert resolve_capital("auto")[0] == 9_876_543
+    assert resolve_capital(" AUTO ")[0] == 9_876_543
+    data = tmp_path / "d"; data.mkdir()
+    (data / "operating_capital.json").write_text(json.dumps({"capital": 2_000_000}))
+    monkeypatch.setenv("STOCKKING_AUTO_CAPITAL_FILE", str(data / "operating_capital.json"))
+    assert resolve_capital("auto")[0] == 2_000_000          # 명시 파일 우선
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    assert resolve_capital()[0] == 2_000_000                 # 환경변수 auto
+    with pytest.raises(ValueError):
+        resolve_capital("abc")
+    with pytest.raises(ValueError):
+        resolve_capital("-5")
+
+
+def test_cli_s02_inputs_accepts_auto_capital(tmp_path, monkeypatch):
+    """collect.py 인자 해석 단계에서 auto 때문에 ValueError가 나지 않아야 한다 (총괄 버그 신고 11/26)."""
+    import importlib.util
+    monkeypatch.setenv("STOCKKING_OPERATING_CAPITAL", "auto")
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location("collect_cli", HERE / "collect.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    got = {}
+    monkeypatch.setattr(mod, "_client", lambda live=False: KisQuotes(FakeClient()))
+    monkeypatch.setattr(mod.s02_inputs, "build", lambda *a, **k: got.update(k) or {"ok": True})
+    k2 = tmp_path / "k2.csv"; k2.write_text("종목코드,종목명\n005930,삼성전자\n", encoding="utf-8")
+    assert mod.main(["s02-inputs", "--kospi200", str(k2), "--out", str(tmp_path / "out")]) == 0
+    assert got["capital"] == 150_000
+
+
+class FlakyClient(FakeClient):
+    """간헐 HTTP 500 / EGW00201 / 장기 구간 500 흉내."""
+
+    def __init__(self, fail_every=0, **kw):
+        super().__init__(**kw)
+        self.n = 0
+        self.fail_every = fail_every
+        self.max_span = 0
+
+    def _call(self, method, path, headers, p):
+        import io
+        import urllib.error
+        self.n += 1
+        if "FID_INPUT_DATE_2" in p and "FID_INPUT_DATE_1" in p and len(p["FID_INPUT_DATE_1"]) == 8:
+            y = lambda s: date(int(s[:4]), int(s[4:6]), int(s[6:]))  # noqa: E731
+            span = (y(p["FID_INPUT_DATE_2"]) - y(p["FID_INPUT_DATE_1"])).days + 1
+            self.max_span = max(self.max_span, span)
+            if span > 150:
+                raise urllib.error.HTTPError("u", 500, "long", {}, io.BytesIO(b"{}"))
+        if self.fail_every and self.n % self.fail_every == 0:
+            if self.n % (2 * self.fail_every) == 0:
+                return {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수 초과"}
+            raise urllib.error.HTTPError("u", 500, "Internal", {}, io.BytesIO(b'{"msg_cd":"X","msg1":"err"}'))
+        return super()._call(method, path, headers, p)
+
+
+def test_retry_on_http_500_and_short_windows(tmp_path, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+    fc = FlakyClient(fail_every=3)
+    q = KisQuotes(fc, log=lambda *_: None)
+    m = s02_inputs.build(q, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    assert m["universe_passed"] == 3 and q.retries > 0
+    assert fc.max_span <= 150                       # 장기 구간 조회 없음
+    assert set(sleeps) <= {1, 2, 4, 8}
+
+
+def test_gives_up_after_5_attempts(monkeypatch):
+    import io
+    import urllib.error
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    class Dead(FakeClient):
+        def _call(self, *a):
+            raise urllib.error.HTTPError("u", 503, "x", {}, io.BytesIO(b""))
+    q = KisQuotes(Dead(), log=lambda *_: None)
+    from stockking_data.kis_quotes import KisQuoteError
+    with pytest.raises(KisQuoteError):
+        q.price_status("005930")
+    assert q.calls == 5
+
+
+def test_non_retryable_http_error_raises_immediately(monkeypatch):
+    import io
+    import urllib.error
+
+    class Forbidden(FakeClient):
+        def _call(self, *a):
+            raise urllib.error.HTTPError("u", 403, "x", {}, io.BytesIO(b""))
+    q = KisQuotes(Forbidden(), log=lambda *_: None)
+    with pytest.raises(urllib.error.HTTPError):
+        q.price_status("005930")
+    assert q.calls == 1
+
+
+def test_s02_inputs_resume_skips_cached_symbols(tmp_path):
+    q = KisQuotes(FakeClient(), log=lambda *_: None)
+    s02_inputs.build(q, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    first = q.calls
+    q2 = KisQuotes(FakeClient(), log=lambda *_: None)
+    m = s02_inputs.build(q2, T, ["005930", "000660"], ["091990"], tmp_path, log=lambda *_: None, status_now=True)
+    assert q2.calls == first - 3 * 5 and m["universe_passed"] == 3   # 2차 실행은 지수만 조회 (종목 3개 × 일봉 4구간+상태 1 생략)
+
+
+class Last50IndexClient(FakeClient):
+    """실측 재현(11/27): KIS 지수 일봉은 요청 구간이 길어도 최근 약 50행만 돌려준다."""
+
+    def _call(self, method, path, headers, p):
+        res = super()._call(method, path, headers, p)
+        if headers["tr_id"] == "FHKUP03500100" and res.get("output2"):
+            res = {**res, "output2": res["output2"][:50]}   # 최신순 앞 50행
+        return res
+
+
+def test_index_bars_pages_back_when_only_50_rows_returned():
+    q = KisQuotes(Last50IndexClient(), log=lambda *_: None)
+    start = T - timedelta(days=s02_inputs.INDEX_LOOKBACK_DAYS)
+    _, rows = q.index_bars("2001", start, T)
+    expect = trading_days(T, start)
+    assert [r["date"] for r in rows] == [d.isoformat() for d in expect]   # 빈 구간 없음
+    assert len(rows) >= 280
+
+
+def test_s02_inputs_refuses_short_index(tmp_path, monkeypatch):
+    monkeypatch.setattr(s02_inputs, "INDEX_LOOKBACK_DAYS", 200)
+    with pytest.raises(RuntimeError, match="200행"):
+        s02_inputs.build(KisQuotes(FakeClient(), log=lambda *_: None), T, ["005930"], [], tmp_path,
+                         log=lambda *_: None, status_now=True)
+    import json
+    m = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert m["status"] == "FAILED" and "200" in m["warning"]
+    assert not (tmp_path / "bars.csv").exists() and not (tmp_path / "index.csv").exists()
